@@ -1,0 +1,285 @@
+"""Boss intro FX: a dramatic ~1.5s reveal when a boss enters.
+
+The screen darkens, the boss name slams in huge text with a red glow,
+and a top-of-screen health bar slides in.  Once the intro completes the
+health bar stays visible for as long as the boss is alive; the screen
+passes the boss's current HP percentage to ``draw`` each frame.
+
+Pure-state + pygame primitives; fonts are cached, surfaces are cached,
+no per-frame allocations on the hot path.
+
+Integration (see docs/specs/boss_fx.md):
+  * ``world._enter_boss`` calls ``boss_fx.start(...)`` via a callback set
+    on the World instance (``world.on_boss_enter``).  The runner wires
+    the callback to the shared ``BossFxSystem`` it owns.
+  * ``screen_game.draw`` draws the overlay and passes the boss's HP pct
+    so the health bar tracks damage.
+  * ``main.py`` triggers a ``Game.shake(...)`` on boss spawn (the
+    callback in the runner does this; the spec documents the shake
+    hook).
+"""
+from __future__ import annotations
+
+import pygame
+
+import config as cfg
+from theme import font_huge, draw_bar
+from utils import clamp, ease_out_cubic, ease_in_out_cubic
+
+
+# ---------------------------------------------------------------------------
+# Timing / layout
+# ---------------------------------------------------------------------------
+INTRO_DURATION = 1.5          # total intro length (seconds)
+DARKEN_TIME = 0.35            # ramp the screen darken over this long
+NAME_SLAM_START = 0.30        # when the name begins to slam in
+NAME_SLAM_TIME = 0.45         # slam travel duration
+HEALTH_REVEAL_START = 0.75    # when the health bar begins to slide in
+HEALTH_REVEAL_TIME = 0.45     # slide-in duration
+
+DARKEN_ALPHA_MAX = 150        # max overlay alpha during intro
+DARKEN_ALPHA_HOLD = 90        # lingering dim while the boss is alive
+
+HEALTH_BAR_H = 18
+HEALTH_BAR_Y = cfg.HUD_H + 8
+HEALTH_BAR_MARGIN = 240        # inset from left/right edges
+
+# Red glow palette (hue-independent; bosses are always "red threat").
+_GLOW = (255, 60, 70)
+_GLOW_DIM = (120, 20, 30)
+_TEXT = (255, 220, 220)
+
+
+# ---------------------------------------------------------------------------
+# Cached resources (built lazily once; never re-created per frame)
+# ---------------------------------------------------------------------------
+_darken_cache: dict[tuple, pygame.Surface] = {}
+_name_cache: dict[tuple, pygame.Surface] = {}
+_glow_cache: dict[tuple, pygame.Surface] = {}
+_label_cache: dict[str, pygame.Surface] = {}
+
+
+def _boss_label(name: str) -> pygame.Surface:
+    """The small uppercase boss-name label for the health bar.  Cached."""
+    cached = _label_cache.get(name)
+    if cached is not None:
+        return cached
+    from theme import font_sm
+    lbl = font_sm(bold=True).render(name.upper(), True, _TEXT)
+    _label_cache[name] = lbl
+    return lbl
+
+
+def _darken_surface(w: int, h: int, alpha: int) -> pygame.Surface:
+    """A full-screen black overlay with the given alpha.  Cached by (w,h,alpha)."""
+    # Quantize alpha to steps of 8 so the cache stays small.
+    q = (alpha >> 3) << 3
+    key = (w, h, q)
+    surf = _darken_cache.get(key)
+    if surf is None:
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        surf.fill((0, 0, 0, q))
+        _darken_cache[key] = surf
+    return surf
+
+
+def _glow_surface(w: int, h: int, color: tuple) -> pygame.Surface:
+    """A soft radial-ish glow rectangle of the given size + color.  Cached.
+
+    Built from a few concentric rounded rects with decreasing alpha.  Cheap
+    enough to build once per (w,h,color) and reuse for every boss.
+    """
+    key = (w, h, color)
+    surf = _glow_cache.get(key)
+    if surf is None:
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        cx, cy = w // 2, h // 2
+        steps = 6
+        max_r = min(w, h) // 2
+        for i in range(steps, 0, -1):
+            r = int(max_r * (i / steps))
+            a = int(120 * (1 - i / steps) ** 1.4) + 20
+            pygame.draw.circle(surf, (*color, min(180, a)), (cx, cy), r)
+        _glow_cache[key] = surf
+    return surf
+
+
+def _name_surface(text: str, hue: int) -> pygame.Surface:
+    """The boss name rendered huge + bold with a red glow halo.  Cached.
+
+    The cache key includes the hue so each boss gets its own tinted halo
+    without re-rendering every frame.
+    """
+    key = (text, hue)
+    cached = _name_cache.get(key)
+    if cached is not None:
+        return cached
+    font = font_huge(bold=True)
+    # Render the name once, then composite a glow behind it.
+    name_img = font.render(text, True, _TEXT)
+    nw, nh = name_img.get_size()
+    # Pad around the name for the glow halo.
+    pad = 60
+    gw, gh = nw + pad * 2, nh + pad * 2
+    out = pygame.Surface((gw, gh), pygame.SRCALPHA)
+    # Tint the glow by the boss hue so each boss feels distinct, but
+    # keep it red-dominant for the "threat" read.
+    from assets import hsl
+    halo = hsl(hue if hue else 0, 0.85, 0.55)
+    glow = _glow_surface(gw, gh, halo)
+    out.blit(glow, (0, 0))
+    # A second, brighter core glow.
+    core = _glow_surface(nw + 20, nh + 20, _GLOW)
+    out.blit(core, (pad - 10, pad - 10))
+    out.blit(name_img, (pad, pad))
+    _name_cache[key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# BossFxSystem
+# ---------------------------------------------------------------------------
+class BossFxSystem:
+    """Owns the boss intro + persistent health bar overlay.
+
+    Lifecycle:
+      * ``start(boss_name, boss_hue)``  — call when a boss spawns.
+      * ``update(dt)``                  — call every frame while ``active``.
+      * ``draw(surf, boss_hp_pct)``     — call every frame while ``active``;
+        pass the boss's current ``hp / max_hp`` so the bar tracks damage.
+      * ``active``                      — True from ``start`` until the boss
+        dies (the runner calls ``stop`` once ``world.boss_active`` flips
+        back to False, or the intro simply completes and the bar stays
+        until ``stop``).
+    """
+
+    __slots__ = (
+        "_name", "_hue", "_t", "_intro_done", "_running",
+        "_bar_pct", "_shake_pending", "_name_y0", "_name_y1",
+        "_name_surf", "_bar_w",
+    )
+
+    def __init__(self) -> None:
+        self._name: str = ""
+        self._hue: int = 0
+        self._t: float = 0.0
+        self._intro_done: bool = False
+        self._running: bool = False
+        self._bar_pct: float = 1.0
+        self._shake_pending: bool = False
+        # Name slam travel: from off-screen-top to center.
+        self._name_y0: float = -120.0
+        self._name_y1: float = float(cfg.WINDOW_H // 2)
+        self._name_surf: pygame.Surface | None = None
+        self._bar_w: int = cfg.WINDOW_W - HEALTH_BAR_MARGIN * 2
+
+    # --- public API -------------------------------------------------------
+    def start(self, boss_name: str, boss_hue: int) -> None:
+        """Begin the intro for a freshly-spawned boss."""
+        self._name = boss_name
+        self._hue = int(boss_hue)
+        self._t = 0.0
+        self._intro_done = False
+        self._running = True
+        self._bar_pct = 1.0
+        self._shake_pending = True
+        # Build the cached name surface now (one allocation, not per-frame).
+        self._name_surf = _name_surface(boss_name, self._hue)
+
+    def stop(self) -> None:
+        """Clear the overlay (call when the boss dies)."""
+        self._intro_done = False
+        self._running = False
+        self._t = 0.0
+        self._name = ""
+        self._name_surf = None
+        self._bar_pct = 1.0
+        self._shake_pending = False
+
+    @property
+    def active(self) -> bool:
+        """True while the intro is playing OR the boss health bar should show."""
+        return self._running
+
+    @property
+    def wants_shake(self) -> bool:
+        """True for one read after ``start`` — the runner triggers a shake."""
+        s = self._shake_pending
+        self._shake_pending = False
+        return s
+
+    def update(self, dt: float) -> None:
+        if self._t < INTRO_DURATION:
+            self._t = min(INTRO_DURATION, self._t + dt)
+            if self._t >= INTRO_DURATION:
+                self._intro_done = True
+
+    def draw(self, surf: pygame.Surface, boss_hp_pct: float) -> None:
+        """Draw the overlay.  ``boss_hp_pct`` is the boss's hp/max_hp, 0..1."""
+        if not self.active:
+            return
+        self._bar_pct = clamp(boss_hp_pct, 0.0, 1.0)
+        w, h = surf.get_size()
+
+        # --- Darken ---
+        if self._t < DARKEN_TIME:
+            a = int(DARKEN_ALPHA_MAX * ease_in_out_cubic(self._t / DARKEN_TIME))
+        else:
+            a = DARKEN_ALPHA_MAX if not self._intro_done else DARKEN_ALPHA_HOLD
+        if a > 0:
+            surf.blit(_darken_surface(w, h, a), (0, 0))
+
+        # --- Name slam ---
+        if self._t >= NAME_SLAM_START and self._name_surf is not None:
+            ns = self._name_surf
+            if self._t < NAME_SLAM_START + NAME_SLAM_TIME:
+                # Slam in with ease-out-cubic for a heavy landing feel.
+                p = ease_out_cubic(
+                    (self._t - NAME_SLAM_START) / NAME_SLAM_TIME
+                )
+                y = self._name_y0 + (self._name_y1 - self._name_y0) * p
+            else:
+                y = self._name_y1
+            # After the slam, the name holds then fades as the bar reveals.
+            hold_end = NAME_SLAM_START + NAME_SLAM_TIME + 0.25
+            fade_end = hold_end + 0.35
+            if self._t > hold_end:
+                fp = clamp((self._t - hold_end) / (fade_end - hold_end), 0.0, 1.0)
+                alpha = int(255 * (1.0 - ease_in_out_cubic(fp)))
+            else:
+                alpha = 255
+            if alpha > 0:
+                # set_alpha on the cached surface is cheap and does not
+                # allocate; we restore it after blit so the cache stays
+                # pristine for the next frame / next boss.
+                ns.set_alpha(alpha)
+                rect = ns.get_rect(center=(w // 2, int(y)))
+                surf.blit(ns, rect)
+                ns.set_alpha(255)
+
+        # --- Health bar reveal (stays after intro) ---
+        if self._t >= HEALTH_REVEAL_START:
+            if self._t < HEALTH_REVEAL_START + HEALTH_REVEAL_TIME:
+                p = ease_out_cubic(
+                    (self._t - HEALTH_REVEAL_START) / HEALTH_REVEAL_TIME
+                )
+                # Slide in from the top edge.
+                y = HEALTH_BAR_Y - 40 + 40 * p
+                # Width wipes in left-to-right.
+                bw = int(self._bar_w * p)
+            else:
+                y = HEALTH_BAR_Y
+                bw = self._bar_w
+            x = (w - bw) // 2
+            br = pygame.Rect(x, int(y), bw, HEALTH_BAR_H)
+            # Backing panel for contrast.
+            panel = pygame.Rect(br.x - 4, br.y - 4, br.w + 8, br.h + 8)
+            pygame.draw.rect(surf, (20, 8, 12), panel, border_radius=4)
+            pygame.draw.rect(surf, _GLOW_DIM, panel, 1, border_radius=4)
+            draw_bar(surf, br, self._bar_pct,
+                     fill=_GLOW, bg=(40, 12, 18), border=_GLOW_DIM, radius=3)
+            # Label the bar once it's fully revealed.
+            if self._intro_done and self._name:
+                lbl = _boss_label(self._name)
+                lr = lbl.get_rect(midleft=(br.x, br.centery))
+                surf.blit(lbl, lr)
