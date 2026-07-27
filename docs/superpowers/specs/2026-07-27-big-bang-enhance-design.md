@@ -33,7 +33,7 @@
 ## 3. Orchestration Architecture
 
 Phased fan-out + critique + synthesis, rồi per-feature specialist
-implementation. Tám phần:
+implementation. Năm phase (A–E):
 
 ```
 Phase A: RESEARCH & IDEATION        ~16 agents, fan-out, song song
@@ -186,6 +186,9 @@ feature = một đơn vị implement độc lập có interface rõ.
   "open_questions": ["..."]
 }
 ```
+> Số `feature_count` và `dimension_counts` chỉ là ví dụ minh họa schema —
+> giá trị thực do Phase C quyết định.
+```
 
 ### Agent C2 — Integration & sequencing review
 
@@ -207,6 +210,7 @@ Nhận feature list từ C1, kiểm tra:
   "final_feature_count": 26
 }
 ```
+> `final_feature_count` chỉ là ví dụ — giá trị thực do Phase C quyết định.
 
 **Mục tiêu Phase C:** ~25-30 feature sequenced, mỗi feature độc lập, có
 files/acceptance/dependencies rõ — sẵn sàng cho Phase E.
