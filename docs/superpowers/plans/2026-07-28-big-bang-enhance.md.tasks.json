@@ -1,0 +1,360 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-28-big-bang-enhance.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Test harness + smoke test",
+      "status": "pending",
+      "description": "**Goal:** Stand up the tests/ directory, pytest config, and a headless smoke-test harness so every later task can write and run tests. Prerequisite for TDD.\n\n**Files:**\n- Create: tests/__init__.py\n- Create: tests/conftest.py\n- Create: tests/test_smoke.py\n- Create: pytest.ini\n- Modify: requirements.txt\n\n**Acceptance Criteria:**\n- [ ] tests/ exists with __init__.py and conftest.py\n- [ ] pytest.ini configures SDL_VIDEODRIVER=dummy env and testpaths=tests\n- [ ] Smoke test imports main, constructs Game() headless, runs 30 frames, exits clean\n- [ ] SDL_VIDEODRIVER=dummy pytest tests/ -q passes (0 failures)\n- [ ] requirements.txt adds pytest>=7.4\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_smoke.py -q`\n\n```json:metadata\n{\"files\": [\"tests/__init__.py\", \"tests/conftest.py\", \"tests/test_smoke.py\", \"pytest.ini\", \"requirements.txt\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_smoke.py -q\", \"acceptanceCriteria\": [\"tests/ exists with __init__.py and conftest.py\", \"pytest.ini configures SDL_VIDEODRIVER=dummy + testpaths\", \"Smoke test imports main, constructs Game(), runs 30 frames, exits clean\", \"SDL_VIDEODRIVER=dummy pytest tests/ -q passes\", \"requirements.txt adds pytest>=7.4\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Combo multiplier cap bug fix",
+      "status": "pending",
+      "description": "**Goal:** Fix the critical combo multiplier bug — COMBO_MULT_CAP=3.0 is defined but never applied, so at combo 200 with maxed combo_step the multiplier hits ~270x. Replace the linear formula with an asymptotic curve capped at 3.0x.\n\n**Files:**\n- Modify: engine/runner.py:31-34,96-99\n- Modify: config.py (add COMBO_TAU)\n- Test: tests/test_combo_cap.py\n\n**Acceptance Criteria:**\n- [ ] combo_mult() returns 1 + 3.0*(1 - exp(-c/COMBO_TAU)) (asymptotic, structurally capped at 3.0x)\n- [ ] At combo 200 with maxed combo_step the multiplier is ~3.0x (not 270x)\n- [ ] The curve is smooth (no hard cliff at 200)\n- [ ] combo_step upgrade reduces COMBO_TAU (ramp speed), not the step\n- [ ] All existing combo-dependent code still works (smoke test passes)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_combo_cap.py -q`\n\n```json:metadata\n{\"files\": [\"engine/runner.py\", \"config.py\", \"tests/test_combo_cap.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_combo_cap.py -q\", \"acceptanceCriteria\": [\"combo_mult() returns 1 + 3.0*(1 - exp(-c/COMBO_TAU)), asymptotic cap 3.0x\", \"At combo 200 with maxed combo_step multiplier is ~3.0x (not 270x)\", \"Curve is smooth (no hard cliff at 200)\", \"combo_step upgrade reduces COMBO_TAU (ramp speed), not the step\", \"All existing combo-dependent code still works\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: BonusProvider + EventBus + registry",
+      "status": "pending",
+      "description": "**Goal:** Structural prerequisite for cleanly adding gear, dungeons, elements, mini-games. Refactor aggregate_bonuses into a BonusProvider registry; add a Runner-owned EventBus replacing module-global FX callbacks; add a Content registry; define MAX_TOTAL_DAMAGE_MULT.\n\n**Files:**\n- Modify: core/bonuses.py (BonusProvider registry)\n- Modify: engine/runner.py (EventBus, wire providers)\n- Modify: engine/enemy.py (emit events)\n- Modify: engine/world.py (emit events)\n- Modify: data/enemies.py (Content registry)\n- Modify: config.py (MAX_TOTAL_DAMAGE_MULT)\n- Create: engine/eventbus.py\n- Test: tests/test_bonus_provider.py, tests/test_eventbus.py\n\n**Acceptance Criteria:**\n- [ ] aggregate_bonuses uses a BonusProvider registry; flat-dict contract unchanged\n- [ ] Existing code split into _skill_tree_provider + _pets_provider, both registered\n- [ ] Runner-owned EventBus replaces module-global FX callbacks; engine modules emit events\n- [ ] Module globals kept as deprecated aliases for one release\n- [ ] Content registry enables ID-based zone/enemy lookup (no silent clamp)\n- [ ] MAX_TOTAL_DAMAGE_MULT sanity cap defined in config.py\n- [ ] Runner idle update loop stays intact\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_bonus_provider.py tests/test_eventbus.py -q`\n\n```json:metadata\n{\"files\": [\"core/bonuses.py\", \"engine/runner.py\", \"engine/enemy.py\", \"engine/world.py\", \"data/enemies.py\", \"config.py\", \"engine/eventbus.py\", \"tests/test_bonus_provider.py\", \"tests/test_eventbus.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_bonus_provider.py tests/test_eventbus.py -q\", \"acceptanceCriteria\": [\"aggregate_bonuses uses BonusProvider registry; flat-dict contract unchanged\", \"Existing code split into _skill_tree_provider + _pets_provider, both registered\", \"Runner-owned EventBus replaces module-global FX callbacks; engine modules emit events\", \"Module globals kept as deprecated aliases for one release\", \"Content registry enables ID-based zone/enemy lookup (no silent clamp)\", \"MAX_TOTAL_DAMAGE_MULT sanity cap defined in config.py\", \"Runner idle update loop stays intact\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: format_number overflow fix",
+      "status": "pending",
+      "description": "**Goal:** utils.format_number overflows at 1e36, returning '1000Dc'. Add a scientific-notation fallback when the unit table is exhausted and tier the precision. Must ship before Task 11 (cnt-infinite-zones).\n\n**Files:**\n- Modify: utils.py (format_number)\n- Test: tests/test_format_number.py\n\n**Acceptance Criteria:**\n- [ ] format_number returns a scientific-notation string when the unit table is exhausted\n- [ ] No '1000Dc' overflow at 1e36+\n- [ ] Tiered precision (<1e6 to 2 decimals, >=1e9 to 2 sig figs)\n- [ ] HUD currency pills still fit after the format change (smoke test passes)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_format_number.py -q`\n\n```json:metadata\n{\"files\": [\"utils.py\", \"tests/test_format_number.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_format_number.py -q\", \"acceptanceCriteria\": [\"format_number returns scientific notation when unit table exhausted\", \"No 1000Dc overflow at 1e36+\", \"Tiered precision (<1e6 to 2 decimals, >=1e9 to 2 sig figs)\", \"HUD currency pills still fit (smoke test passes)\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Save-version migration chain",
+      "status": "pending",
+      "description": "**Goal:** save_version=2 is decorative — from_dict uses hasattr+setattr with no migration logic. Add a MIGRATIONS dict of pure functions; load() walks the chain from the file's save_version up to CURRENT. Bump save_version to 3.\n\n**Files:**\n- Modify: core/state.py (MIGRATIONS, load, from_dict)\n- Modify: core/save_manager.py (if it has its own load path)\n- Test: tests/test_save_migration.py\n\n**Acceptance Criteria:**\n- [ ] A MIGRATIONS dict of pure functions, applied in load() by walking from save_version up to CURRENT\n- [ ] save_version bumped to 3 with the first migration (seeds render_quality, attuned_element, dojo, rhythm_streak, etc.)\n- [ ] Each migration is unit-testable with a fixture dict\n- [ ] Never mutates the live save during migration\n- [ ] An existing v2 save loads without data loss after migration\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_save_migration.py -q`\n\n```json:metadata\n{\"files\": [\"core/state.py\", \"core/save_manager.py\", \"tests/test_save_migration.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_save_migration.py -q\", \"acceptanceCriteria\": [\"MIGRATIONS dict of pure functions, applied in load() walking save_version to CURRENT\", \"save_version bumped to 3 with first migration (seeds new-field defaults)\", \"Each migration unit-testable with a fixture dict\", \"Never mutates live save during migration\", \"Existing v2 save loads without data loss after migration\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: convert_alpha on sprite surfaces",
+      "status": "pending",
+      "description": "**Goal:** The 5 sprite caches in assets.py create SRCALPHA surfaces but never call .convert_alpha(), so every blit does a slow 32-bit ARGB software composite. Add .convert_alpha() at cache-miss time.\n\n**Files:**\n- Modify: assets.py:27-45,52-103,110-127,134-161,168-182\n- Test: tests/test_convert_alpha.py\n\n**Acceptance Criteria:**\n- [ ] ninja/enemy/firefly/building/pet surfaces all call .convert_alpha() before caching\n- [ ] No behavior change — sprites render identically (smoke test passes)\n- [ ] Blit throughput improves ~1.5-2x in a microbenchmark\n- [ ] Caches remain lazy (no work before display.set_mode)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_convert_alpha.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"tests/test_convert_alpha.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_convert_alpha.py -q\", \"acceptanceCriteria\": [\"All 5 sprite surfaces call .convert_alpha() before caching\", \"No behavior change \\u2014 sprites render identically\", \"Blit throughput improves ~1.5-2x\", \"Caches remain lazy (no work before display.set_mode)\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Adopt ParticleSystem2",
+      "status": "pending",
+      "blockedBy": [
+        6
+      ],
+      "description": "**Goal:** engine/particles.py ParticleSystem2 is fully-pooled but main.py:64 still uses the legacy assets.ParticleSystem which allocates a fresh SRCALPHA Surface per particle per frame. Replace the import + instantiation; route bursts through ParticleSystem2.\n\n**Files:**\n- Modify: main.py:64,216-219\n- Modify: engine/death_fx.py, engine/firefly_fx.py, engine/combo_fx.py\n- Test: tests/test_particles_pool.py\n\n**Acceptance Criteria:**\n- [ ] main.py instantiates ParticleSystem2 instead of assets.ParticleSystem\n- [ ] death/firefly/combo bursts route through ParticleSystem2\n- [ ] No per-frame Surface allocations after warm-up\n- [ ] Particle count capped per quality tier\n- [ ] Visual parity with the legacy system at the default tier\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_particles_pool.py -q`\n\n```json:metadata\n{\"files\": [\"main.py\", \"engine/death_fx.py\", \"engine/firefly_fx.py\", \"engine/combo_fx.py\", \"tests/test_particles_pool.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_particles_pool.py -q\", \"acceptanceCriteria\": [\"main.py instantiates ParticleSystem2 instead of assets.ParticleSystem\", \"death/firefly/combo bursts route through ParticleSystem2\", \"No per-frame Surface allocations after warm-up\", \"Particle count capped per quality tier\", \"Visual parity at default tier\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: Elite enemies + mini-bosses",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** Wire up the dead is_elite field on Enemy. In world._spawn_regular add a 5% elite roll (3x HP, 5x gold, guaranteed rare_drop). Add _spawn_miniboss at 50% ZONE_DISTANCE that blocks progress until killed (0.4x the zone boss stats).\n\n**Files:**\n- Modify: engine/world.py:86-91,60-84\n- Modify: engine/enemy.py:48-58\n- Modify: engine/runner.py\n- Modify: engine/boss_fx.py\n- Modify: ui/screen_game.py\n- Test: tests/test_elite_miniboss.py\n\n**Acceptance Criteria:**\n- [ ] 5% of regular spawns are elite (3x HP, 5x gold, guaranteed rare_drop)\n- [ ] A mini-boss spawns at 50% zone distance and blocks progress until killed\n- [ ] is_elite is set on spawned elites and rendered distinctly\n- [ ] No new GameState fields (elites are transient)\n- [ ] Chests drop on elite and boss kills\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_elite_miniboss.py -q`\n\n```json:metadata\n{\"files\": [\"engine/world.py\", \"engine/enemy.py\", \"engine/runner.py\", \"engine/boss_fx.py\", \"ui/screen_game.py\", \"tests/test_elite_miniboss.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_elite_miniboss.py -q\", \"acceptanceCriteria\": [\"5% of regular spawns are elite (3x HP, 5x gold, guaranteed rare_drop)\", \"Mini-boss spawns at 50% zone distance, blocks progress until killed\", \"is_elite set on spawned elites, rendered distinctly\", \"No new GameState fields (elites transient)\", \"Chests drop on elite and boss kills\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 9,
+      "subject": "Task 9: Building unlock rebalance",
+      "status": "pending",
+      "blockedBy": [
+        2,
+        5
+      ],
+      "description": "**Goal:** 8 of 18 buildings have unlock_zone 9-16, but ascension resets zone to 0, so half the roster is dead content. Prefer persist-through-ascension: buildings carry over and scale by tier stat_mult; only gold/upgrades reset. Re-tune elixir_gain. Note gap #1: re-verify after Task 12.\n\n**Files:**\n- Modify: data/buildings.py (unlock_zone rebalance)\n- Modify: core/ascend.py (persist buildings, re-tune elixir_gain)\n- Modify: core/game_economy.py (building scaling by tier)\n- Modify: core/state.py (no building reset on ascension)\n- Test: tests/test_building_unlock.py\n\n**Acceptance Criteria:**\n- [ ] All 18 buildings are reachable within a normal playthrough\n- [ ] Buildings persist through ascension (scaled by tier stat_mult)\n- [ ] elixir_gain re-tuned so the post-ascension economy doesn't snowball\n- [ ] The first 3 ascensions feel balanced\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_building_unlock.py -q`\n\n```json:metadata\n{\"files\": [\"data/buildings.py\", \"core/ascend.py\", \"core/game_economy.py\", \"core/state.py\", \"tests/test_building_unlock.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_building_unlock.py -q\", \"acceptanceCriteria\": [\"All 18 buildings reachable within a normal playthrough\", \"Buildings persist through ascension (scaled by tier stat_mult)\", \"elixir_gain re-tuned so post-ascension economy doesn't snowball\", \"First 3 ascensions feel balanced\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 10,
+      "subject": "Task 10: Combo Finishers + grace",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** Three combo improvements. (1) Combo Finishers: bank a charge at MILESTONES (25/50/100/200); 4 finishers spend charges. (2) combo_timer goes negative to -1.5s before resetting (grace). (3) COMBO LOST feedback on combo break.\n\n**Files:**\n- Modify: engine/runner.py:146-150,221-253\n- Modify: engine/combo_fx.py (MILESTONES reuse, combo-lost banner)\n- Modify: core/state.py (combo_charges, combo_grace)\n- Modify: ui/screen_game.py (finisher buttons, COMBO LOST)\n- Test: tests/test_combo_finishers.py\n\n**Acceptance Criteria:**\n- [ ] A charge is banked at each MILESTONE (25/50/100/200); persists through decay window\n- [ ] 4 finishers spend charges; damage is a fixed multiple of tap_damage with its own cap\n- [ ] Bosses are auto-killable without Phantom Step\n- [ ] combo_timer goes negative to -1.5s before reset (grace); kill during grace restores combo\n- [ ] COMBO LOST feedback on combo break (gated by reduced_motion)\n- [ ] Combo Milestone Evolutions NOT implemented\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_combo_finishers.py -q`\n\n```json:metadata\n{\"files\": [\"engine/runner.py\", \"engine/combo_fx.py\", \"core/state.py\", \"ui/screen_game.py\", \"tests/test_combo_finishers.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_combo_finishers.py -q\", \"acceptanceCriteria\": [\"Charge banked at each MILESTONE (25/50/100/200); persists through decay window\", \"4 finishers spend charges; damage fixed multiple of tap_damage with own cap\", \"Bosses auto-killable without Phantom Step\", \"combo_timer goes negative to -1.5s before reset (grace); kill during grace restores\", \"COMBO LOST feedback on combo break (gated by reduced_motion)\", \"Combo Milestone Evolutions NOT implemented\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 11,
+      "subject": "Task 11: Render-quality tier",
+      "status": "pending",
+      "blockedBy": [
+        6,
+        7
+      ],
+      "description": "**Goal:** A 3-tier render quality (high/med/low) extending the existing reduced_motion gate coherently. Low tier caps particles at 25%, disables additive glow, disables parallax. The tier MUST gate the same code path as reduced_motion.\n\n**Files:**\n- Modify: core/state.py (render_quality field — seeded by Task 5)\n- Modify: ui/screen_settings.py (render quality toggle)\n- Modify: main.py (read render_quality)\n- Create: core/quality.py\n- Test: tests/test_render_tier.py\n\n**Acceptance Criteria:**\n- [ ] A render_quality field on GameState (high/med/low) with a settings toggle\n- [ ] Low tier caps particles at 25%, disables additive glow, disables parallax\n- [ ] The gate is the same code path as reduced_motion (reduced_motion forces low tier)\n- [ ] 60fps maintained on a weak-iGPU reference machine at low tier\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_render_tier.py -q`\n\n```json:metadata\n{\"files\": [\"core/state.py\", \"core/quality.py\", \"ui/screen_settings.py\", \"tests/test_render_tier.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_render_tier.py -q\", \"acceptanceCriteria\": [\"render_quality field on GameState (high/med/low) with settings toggle\", \"Low tier caps particles 25%, disables additive glow, disables parallax\", \"Gate is same code path as reduced_motion (reduced_motion forces low)\", \"60fps maintained on weak-iGPU at low tier\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 12,
+      "subject": "Task 12: Infinite zone cycling",
+      "status": "pending",
+      "blockedBy": [
+        9,
+        4
+      ],
+      "description": "**Goal:** The game ends at zone 9. cycle=floor(zone_index/9), zone_in_cycle=zone_index%9. CYCLE_HP_MULT=8.0, CYCLE_DMG_MULT=7.0, CYCLE_GOLD_MULT=9.0. Reuse the 9 ZONES + BOSSES. tier_mult = 1.6^tier replaces ASCEND_TIERS stat_mult. Note gap #1: re-verify Task 9's elixir_gain.\n\n**Files:**\n- Modify: engine/world.py:42-52\n- Modify: data/enemies.py (cycle-based achievements)\n- Modify: config.py (CYCLE_*_MULT, tier_mult formula)\n- Modify: engine/ninja.py:92-96 (_ascend_tier_mult = 1.6^tier)\n- Modify: data/quests.py (cycle achievements)\n- Modify: ui/screen_game.py (Cycle N header)\n- Test: tests/test_infinite_zones.py\n\n**Acceptance Criteria:**\n- [ ] zone_hp/dmg/gold multiply by per-cycle multipliers (cycle=floor(zone_index/9))\n- [ ] Past zone 9 the road continues with the same 9 themed zones at scaled stats\n- [ ] A visible Cycle N header renders in the game HUD\n- [ ] tier_mult = 1.6^tier replaces the ASCEND_TIERS stat_mult; 7 names remain as labels\n- [ ] Cycle-based achievements (reach cycle 1/3/5/10) exist and fire\n- [ ] The endgame no longer stalls at zone 9\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_infinite_zones.py -q`\n\n```json:metadata\n{\"files\": [\"engine/world.py\", \"data/enemies.py\", \"config.py\", \"engine/ninja.py\", \"data/quests.py\", \"ui/screen_game.py\", \"tests/test_infinite_zones.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_infinite_zones.py -q\", \"acceptanceCriteria\": [\"zone_hp/dmg/gold multiply by per-cycle multipliers (cycle=floor(zone_index/9))\", \"Past zone 9 road continues with same 9 zones at scaled stats\", \"Visible Cycle N header in game HUD\", \"tier_mult = 1.6^tier replaces ASCEND_TIERS stat_mult; 7 names remain as labels\", \"Cycle-based achievements (reach cycle 1/3/5/10) exist and fire\", \"Endgame no longer stalls at zone 9\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 13,
+      "subject": "Task 13: Boss soft-phase + attack patterns",
+      "status": "pending",
+      "blockedBy": [
+        8,
+        3
+      ],
+      "description": "**Goal:** Consolidate boss proposals into ONE boss system. Soft-phase: HP milestones at 75/50/25% add attack layers by scaling timers. Scale attack interval down as HP drops. Note gap #4: re-test after Task 24.\n\n**Files:**\n- Modify: engine/enemy.py:105-151\n- Modify: engine/world.py\n- Modify: engine/runner.py\n- Modify: engine/boss_fx.py\n- Modify: data/enemies.py\n- Test: tests/test_boss_phases.py\n\n**Acceptance Criteria:**\n- [ ] Bosses gain HP-threshold attack layers at 75/50/25% (no new state machine)\n- [ ] Attack frequency scales up as HP drops\n- [ ] Phase transitions communicated (nameplate flash, banner, hue shift) without pausing\n- [ ] No enrage timer and no weak-point-tap — auto-attack DPS clears the boss\n- [ ] The shield phase is breakable by sustained auto-attack DPS\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_boss_phases.py -q`\n\n```json:metadata\n{\"files\": [\"engine/enemy.py\", \"engine/world.py\", \"engine/runner.py\", \"engine/boss_fx.py\", \"data/enemies.py\", \"tests/test_boss_phases.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_boss_phases.py -q\", \"acceptanceCriteria\": [\"Bosses gain HP-threshold attack layers at 75/50/25% (scaling only)\", \"Attack frequency scales up as HP drops\", \"Phase transitions communicated (nameplate flash, banner, hue shift) without pausing\", \"No enrage timer, no weak-point-tap \\u2014 auto-attack DPS clears boss\", \"Shield phase breakable by sustained auto-attack DPS\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 14,
+      "subject": "Task 14: Pet depth (stars + passive)",
+      "status": "pending",
+      "blockedBy": [
+        3,
+        5
+      ],
+      "description": "**Goal:** Make the 12-pet collection meaningful. (1) Passive-at-capstone: owned-unequipped pets at bond>=5 add 1/4 of pet_bonus, at bond>=10 add 50%. (2) Star levels (1-12) from duplicate eggs. (3) Nested pet prestige (Spirit Embers) only at max bond.\n\n**Files:**\n- Modify: core/bonuses.py (passive-at-capstone provider)\n- Modify: data/pets.py (star level defs)\n- Modify: core/gacha.py (duplicate eggs -> star levels)\n- Modify: core/state.py (pet_stars, spirit_embers)\n- Test: tests/test_pet_depth.py\n\n**Acceptance Criteria:**\n- [ ] Owned-but-unequipped pets contribute 25% at bond>=5, 50% at bond>=10\n- [ ] Equipped pet bonus is meaningfully larger than the passive one\n- [ ] Star levels (1-12) from duplicate eggs extend the bond system\n- [ ] Nested pet prestige (Spirit Embers) only at max bond (bond 10)\n- [ ] Spirit Ember payouts are clearly worth the re-grind\n- [ ] aggregate_bonuses swings aren't wild on pet swaps\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_pet_depth.py -q`\n\n```json:metadata\n{\"files\": [\"core/bonuses.py\", \"data/pets.py\", \"core/gacha.py\", \"core/state.py\", \"tests/test_pet_depth.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_pet_depth.py -q\", \"acceptanceCriteria\": [\"Owned-unequipped pets contribute 25% at bond>=5, 50% at bond>=10\", \"Equipped pet bonus meaningfully larger than passive\", \"Star levels (1-12) from duplicate eggs extend bond system\", \"Nested pet prestige (Spirit Embers) only at max bond (10)\", \"Spirit Ember payouts clearly worth re-grind\", \"aggregate_bonuses swings not wild on pet swaps\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 15,
+      "subject": "Task 15: Build specialization + Dojos",
+      "status": "pending",
+      "blockedBy": [
+        3,
+        12,
+        5
+      ],
+      "description": "**Goal:** Unify build-specialisation + Dojo + Heritage into ONE axis. 4 Dojos (Kage-bunshin idle / Iaijutsu tap-burst / Shikigami summon / Kusari-gama multi-hit) commit per ascension. ADDITIVE, not mutually-exclusive. Completing a full ascension under a Dojo grants its Heritage passive.\n\n**Files:**\n- Modify: data/skill_tree.py (Dojo nodes)\n- Modify: core/bonuses.py (dojo provider, heritage provider)\n- Modify: engine/ninja.py (dojo multipliers in compute_ninja_stats)\n- Modify: core/ascend.py (grant heritage on ascension)\n- Modify: core/state.py (dojo, heritage)\n- Test: tests/test_build_spec.py\n\n**Acceptance Criteria:**\n- [ ] 4 damage paths (Dojos) commit per ascension, mapped to the 4 Godai elements\n- [ ] Specialization is ADDITIVE (buffs toward chosen), NOT mutually-exclusive\n- [ ] A viable generalist default exists; respec is free/cheap\n- [ ] Completing a full ascension under a Dojo grants its Heritage passive\n- [ ] The collect all 5 heritages meta-goal exists\n- [ ] Build + Godai multipliers compose cleanly in compute_ninja_stats\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_build_spec.py -q`\n\n```json:metadata\n{\"files\": [\"data/skill_tree.py\", \"core/bonuses.py\", \"engine/ninja.py\", \"core/ascend.py\", \"core/state.py\", \"tests/test_build_spec.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_build_spec.py -q\", \"acceptanceCriteria\": [\"4 damage paths (Dojos) commit per ascension, mapped to Godai elements\", \"Specialization ADDITIVE (buffs toward chosen), NOT mutually-exclusive\", \"Viable generalist default exists; respec free/cheap\", \"Completing full ascension under Dojo grants Heritage passive\", \"Collect all 5 heritages meta-goal exists\", \"Build + Godai multipliers compose cleanly in compute_ninja_stats\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 16,
+      "subject": "Task 16: Splash/Skip (Cleave + Portal)",
+      "status": "pending",
+      "blockedBy": [
+        12,
+        2
+      ],
+      "description": "**Goal:** Give the late-ascension road zooming-through-zones dopamine. Add a Cleave stat that overkill-clears the next K enemies; a rare Yokai Portal boss variant that jumps the zone bar. Gate Cleave behind mid-ascension.\n\n**Files:**\n- Modify: engine/world.py (cleave + yokai portal)\n- Modify: engine/enemy.py (overkill cleave)\n- Modify: data/skill_tree.py (cleave node)\n- Modify: engine/runner.py (cleave application)\n- Test: tests/test_splash_skip.py\n\n**Acceptance Criteria:**\n- [ ] A Cleave stat overkill-clears the next K enemies when damage massively overkills\n- [ ] A rare Yokai Portal boss variant jumps the zone bar by a chunk\n- [ ] Cleave is gated behind mid-ascension (early zones still feel earned)\n- [ ] Yokai Portal skips don't bypass bestiary/achievement reveals\n- [ ] A new player never sees splash in the first runs\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_splash_skip.py -q`\n\n```json:metadata\n{\"files\": [\"engine/world.py\", \"engine/enemy.py\", \"data/skill_tree.py\", \"engine/runner.py\", \"tests/test_splash_skip.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_splash_skip.py -q\", \"acceptanceCriteria\": [\"Cleave stat overkill-clears next K enemies when damage massively overkills\", \"Yokai Portal boss variant jumps zone bar by a chunk\", \"Cleave gated behind mid-ascension (early zones feel earned)\", \"Yokai Portal skips don't bypass bestiary/achievement reveals\", \"New player never sees splash in first runs\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 17,
+      "subject": "Task 17: Permanent scaling (tokens + Heritage)",
+      "status": "pending",
+      "blockedBy": [
+        3,
+        5,
+        12
+      ],
+      "description": "**Goal:** Three permanent-scaling systems. (1) Stacking tokens: +1%-per-token, permanent, from daily quests + zone-boss milestones (NOT achievements). (2) Heritage passives: convert 14 achievements to permanent cumulative multipliers. (3) Epic Research split to Task 18. Note gap #3: edits core/quests.py alongside Task 26.\n\n**Files:**\n- Modify: data/quests.py (Heritage conversion)\n- Modify: core/quests.py (token awards, heritage multipliers)\n- Modify: core/state.py (tokens)\n- Modify: core/bonuses.py (token + heritage providers)\n- Test: tests/test_permanent_scaling.py\n\n**Acceptance Criteria:**\n- [ ] Stacking tokens (+1% each, permanent, survive all resets) sourced from daily quests + zone-boss milestones\n- [ ] Token acquisition rate capped so +1% complements rather than replaces exponential zone scaling\n- [ ] The 14 achievements converted to permanent cumulative multipliers (Heritage passives)\n- [ ] Hidden/secret achievements have cryptic in-game hints\n- [ ] Tokens + Heritage have distinct sources — no double-counting\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_permanent_scaling.py -q`\n\n```json:metadata\n{\"files\": [\"data/quests.py\", \"core/quests.py\", \"core/state.py\", \"core/bonuses.py\", \"tests/test_permanent_scaling.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_permanent_scaling.py -q\", \"acceptanceCriteria\": [\"Stacking tokens (+1% each, permanent, survive all resets) from daily quests + zone-boss milestones\", \"Token acquisition rate capped so +1% complements not replaces exponential zone scaling\", \"14 achievements converted to permanent cumulative multipliers (Heritage passives)\", \"Hidden/secret achievements have cryptic in-game hints\", \"Tokens + Heritage have distinct sources \\u2014 no double-counting\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 18,
+      "subject": "Task 18: Epic Research meta-tree",
+      "status": "pending",
+      "blockedBy": [
+        17
+      ],
+      "description": "**Goal:** A permanent meta-tree bought with underused medals/amber (Elixir Resonance, Away Mastery +% offline growth, Lab Discipline); reuses skill_tree.py structure. Away Mastery keeps offline growth meaningfully but strictly less than active+boosted.\n\n**Files:**\n- Modify: data/skill_tree.py (Epic Research nodes)\n- Modify: core/state.py (epic_research)\n- Modify: core/bonuses.py (epic research provider)\n- Modify: core/offline.py (Away Mastery)\n- Test: tests/test_epic_research.py\n\n**Acceptance Criteria:**\n- [ ] An Epic Research permanent meta-tree bought with medals/amber\n- [ ] Epic Research reuses skill_tree.py structure\n- [ ] Away Mastery keeps offline growth meaningfully but strictly less than active+boosted earnings\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_epic_research.py -q`\n\n```json:metadata\n{\"files\": [\"data/skill_tree.py\", \"core/state.py\", \"core/bonuses.py\", \"core/offline.py\", \"tests/test_epic_research.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_epic_research.py -q\", \"acceptanceCriteria\": [\"Epic Research permanent meta-tree bought with medals/amber (Elixir Resonance, Away Mastery, Lab Discipline)\", \"Epic Research reuses skill_tree.py structure\", \"Away Mastery keeps offline growth meaningfully but strictly less than active+boosted\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 19,
+      "subject": "Task 19: Gacha fairness + reveal drama",
+      "status": "pending",
+      "blockedBy": [
+        14,
+        5
+      ],
+      "description": "**Goal:** Convert gacha from gamble to guaranteed progression. (1) Soft-pity ramp. (2) Spark/pity-token shop. (3) Dupe-to-upgrade. (4) Early-pity guarantee. (5) Multi-stage reveal leaks rarity color from t=0.\n\n**Files:**\n- Modify: core/gacha.py (soft-pity, spark shop, dupe-to-upgrade)\n- Modify: config.py (soft-pity constants)\n- Modify: engine/gacha_fx.py (multi-stage reveal)\n- Modify: ui/screen_pets.py (spark shop UI, odds UI)\n- Modify: core/state.py (pity_tokens, banner_pulls)\n- Test: tests/test_gacha_fairness.py\n\n**Acceptance Criteria:**\n- [ ] Soft-pity ramp shortens the PITY_LEGENDARY=200 grind\n- [ ] Spark/pity-token shop (1 token per pull, trade 40 for any unlocked pet); pity carries across banners\n- [ ] Dupe-to-upgrade: duplicates feed a per-pet upgrade track; maxed pets removed from the pool\n- [ ] Early-pity guarantee in the first 10 pulls of a new banner\n- [ ] Multi-stage reveal leaks the rarity color into the suspense glow from t=0\n- [ ] Rarity-scaled screen shake/hit-stop; a skip activates after the tell; batch-summary-first for 10-pulls\n- [ ] Visible odds UI\n- [ ] Banner rotation is NOT implemented\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_gacha_fairness.py -q`\n\n```json:metadata\n{\"files\": [\"core/gacha.py\", \"config.py\", \"engine/gacha_fx.py\", \"ui/screen_pets.py\", \"core/state.py\", \"tests/test_gacha_fairness.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_gacha_fairness.py -q\", \"acceptanceCriteria\": [\"Soft-pity ramp shortens PITY_LEGENDARY=200 grind\", \"Spark/pity-token shop (1 token per pull, trade 40 for any pet); pity carries across banners\", \"Dupe-to-upgrade: duplicates feed per-pet upgrade track; maxed pets removed from pool\", \"Early-pity guarantee in first 10 pulls of a new banner\", \"Multi-stage reveal leaks rarity color from t=0\", \"Rarity-scaled shake/hit-stop; skip after tell; batch-summary-first for 10-pulls\", \"Visible odds UI\", \"Banner rotation NOT implemented\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 20,
+      "subject": "Task 20: Gear data model + boss drops",
+      "status": "pending",
+      "blockedBy": [
+        3,
+        5,
+        13
+      ],
+      "description": "**Goal:** Gear data model + affix definitions + BonusProvider registration + boss-drop logic. 4 gear slots, passive affixes via BonusProvider, drops on boss kill. Gear rarity reuses GACHA_RATES. Model half of the split; Forge UI is Task 33.\n\n**Files:**\n- Modify: config.py (gear affix defs, rarity)\n- Modify: core/bonuses.py (gear provider)\n- Modify: core/state.py (gear)\n- Modify: engine/runner.py (boss-drop logic)\n- Test: tests/test_gear_model.py\n\n**Acceptance Criteria:**\n- [ ] 4 gear slots with passive affixes flowing through aggregate_bonuses via BonusProvider\n- [ ] Boss kills drop gear (automatic, no active requirement)\n- [ ] Gear rarity reuses GACHA_RATES\n- [ ] Gear multipliers fit the defined stacking order with a MAX_TOTAL_DAMAGE_MULT cap\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_gear_model.py -q`\n\n```json:metadata\n{\"files\": [\"config.py\", \"core/bonuses.py\", \"core/state.py\", \"engine/runner.py\", \"tests/test_gear_model.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_gear_model.py -q\", \"acceptanceCriteria\": [\"4 gear slots with passive affixes via aggregate_bonuses BonusProvider\", \"Boss kills drop gear (automatic, no active requirement)\", \"Gear rarity reuses GACHA_RATES\", \"Gear multipliers fit stacking order with MAX_TOTAL_DAMAGE_MULT cap\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 21,
+      "subject": "Task 21: Godai elemental fusion",
+      "status": "pending",
+      "blockedBy": [
+        15,
+        3
+      ],
+      "description": "**Goal:** Transform 4 Godai nodes from flat +15% into a LIVE combat decision layer. Add element field to EnemyDef, attuned_element to GameState (default none=1x), 4-cycle type chart, 4 fusion effects on 30s cooldown. Note gap #7: edits data/enemies.py ZONES alongside Tasks 12 + 31.\n\n**Files:**\n- Modify: data/enemies.py (element field + zone themes)\n- Modify: data/skill_tree.py (fusion nodes)\n- Modify: core/state.py (attuned_element — seeded by Task 5)\n- Modify: engine/enemy.py (elemental damage mult)\n- Modify: engine/runner.py (fusion cooldown, attunement)\n- Modify: ui/screen_godai.py (attunement UI)\n- Test: tests/test_godai_fusion.py\n\n**Acceptance Criteria:**\n- [ ] EnemyDef has an element field themed by zone\n- [ ] attuned_element on GameState defaults to 'none' (1x damage to everything)\n- [ ] A 4-cycle type chart (2x advantage / 0.5x disadvantage) with 4 fusion effects on a 30s cooldown\n- [ ] An auto-attune toggle lets idle players opt out — idle is never worse than 1x\n- [ ] Dual-element skill-tree nodes are the complement (unlock gate), not a competing system\n- [ ] The zone-environmental-hazards proposal is NOT implemented\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_godai_fusion.py -q`\n\n```json:metadata\n{\"files\": [\"data/enemies.py\", \"data/skill_tree.py\", \"core/state.py\", \"engine/enemy.py\", \"engine/runner.py\", \"ui/screen_godai.py\", \"tests/test_godai_fusion.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_godai_fusion.py -q\", \"acceptanceCriteria\": [\"EnemyDef has element field themed by zone\", \"attuned_element on GameState defaults to none (1x damage to everything)\", \"4-cycle type chart (2x advantage / 0.5x disadvantage) + 4 fusion effects on 30s cooldown\", \"Auto-attune toggle lets idle players opt out \\u2014 idle never worse than 1x\", \"Dual-element skill-tree nodes are complement (unlock gate), not competing system\", \"Zone-environmental-hazards NOT implemented \\u2014 fusion is single elemental system\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 22,
+      "subject": "Task 22: Run upgrade + skill-tree expansion",
+      "status": "pending",
+      "blockedBy": [
+        15,
+        10
+      ],
+      "description": "**Goal:** Cheap content that deepens the per-run build. (1) Run upgrade expansion: 13 to ~20. (2) New skill-tree branches (Defense/Combo/Tap Mastery) + cross-branch capstones expanding the 40-node tree toward ~60. Active-skill t2/t3 chain off ab_* nodes.\n\n**Files:**\n- Modify: config.py (TAP_UPGRADE_DEFS expansion)\n- Modify: data/skill_tree.py (new branches + capstones)\n- Modify: core/game_economy.py (if new upgrade keys need economy hooks)\n- Test: tests/test_run_upgrade_expansion.py\n\n**Acceptance Criteria:**\n- [ ] Run upgrades expand from 13 to ~20 (tap-specialist, skill-adjacent, combo-decay-resistance)\n- [ ] New skill-tree branches (Defense/Combo/Tap Mastery) with cross-branch capstones\n- [ ] Active-skill tier upgrades (t2/t3) chain off existing ab_* nodes\n- [ ] No new verb — deepens existing skills\n- [ ] Reset on ascension (no save-migration risk for run upgrades)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_run_upgrade_expansion.py -q`\n\n```json:metadata\n{\"files\": [\"config.py\", \"data/skill_tree.py\", \"core/game_economy.py\", \"tests/test_run_upgrade_expansion.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_run_upgrade_expansion.py -q\", \"acceptanceCriteria\": [\"Run upgrades expand 13 to ~20 (tap-specialist, skill-adjacent, combo-decay-resistance)\", \"New skill-tree branches (Defense/Combo/Tap Mastery) with cross-branch capstones\", \"Active-skill tier upgrades (t2/t3) chain off existing ab_* nodes\", \"No new verb \\u2014 deepens existing skills\", \"Reset on ascension (no save-migration risk)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 23,
+      "subject": "Task 23: Shadow Dungeon runner",
+      "status": "pending",
+      "blockedBy": [
+        13,
+        10,
+        3
+      ],
+      "description": "**Goal:** A DungeonRunner that composes existing engine components (World, enemy.py, skills.py), not duplicate Runner logic. Road loop undisturbed. No new currency. Godai Fire ties to dungeon. Note gap #2: reference real modules, not nonexistent combo_tech.py/elements.py.\n\n**Files:**\n- Modify: engine/runner.py (DungeonRunner class)\n- Modify: engine/world.py (dungeon world composition)\n- Modify: core/state.py (dungeon_* fields)\n- Test: tests/test_shadow_dungeon.py\n\n**Acceptance Criteria:**\n- [ ] A DungeonRunner that composes existing engine components, not duplicate Runner logic\n- [ ] The road loop runs undisturbed while the dungeon is active\n- [ ] No new currency (gated on medals or zone progression)\n- [ ] The Godai Fire element ties to the dungeon\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_shadow_dungeon.py -q`\n\n```json:metadata\n{\"files\": [\"engine/runner.py\", \"engine/world.py\", \"core/state.py\", \"tests/test_shadow_dungeon.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_shadow_dungeon.py -q\", \"acceptanceCriteria\": [\"DungeonRunner composes existing engine components, not duplicate Runner logic\", \"Road loop runs undisturbed while dungeon active\", \"No new currency (gated on medals or zone progression)\", \"Godai Fire element ties to the dungeon\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 24,
+      "subject": "Task 24: Tap-vs-auto rebalance + fatigue",
+      "status": "pending",
+      "blockedBy": [
+        2,
+        22
+      ],
+      "description": "**Goal:** THE idle-integrity fix. Tap DPS (1.13B) is 94x auto DPS (12M). Add auto_mult run upgrade; scale tap base DOWN ~5x; add tap fatigue (5%/tap above 5/s, floor 0.3x). Note gap #4: re-test boss shield (Task 13). Open question #2: ~3:1 ratio baked in.\n\n**Files:**\n- Modify: engine/ninja.py (auto_mult, tap base scale, tap fatigue)\n- Modify: config.py (auto_mult upgrade, tap fatigue constants)\n- Modify: engine/runner.py (tap fatigue tracking)\n- Modify: core/game_economy.py (if economy depends on tap)\n- Test: tests/test_tap_auto_rebalance.py\n\n**Acceptance Criteria:**\n- [ ] An auto_mult run upgrade mirrors tap_mult\n- [ ] Tap base scaled down so the tap:auto ratio is ~3:1 (not 94:1)\n- [ ] Tap fatigue: 5%/tap above 5 taps/s, floor 0.3x (tapping never becomes useless)\n- [ ] The rebalance ships with the new auto_mult upgrade (a new option, not a pure nerf)\n- [ ] Auto-attack is the backbone; tap is a meaningful-but-bounded bonus\n- [ ] No 100x+ active burst (killed as economy-breaking)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_tap_auto_rebalance.py -q`\n\n```json:metadata\n{\"files\": [\"engine/ninja.py\", \"config.py\", \"engine/runner.py\", \"core/game_economy.py\", \"tests/test_tap_auto_rebalance.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_tap_auto_rebalance.py -q\", \"acceptanceCriteria\": [\"auto_mult run upgrade mirrors tap_mult\", \"Tap base scaled down so tap:auto ratio ~3:1 (not 94:1)\", \"Tap fatigue: 5%/tap above 5 taps/s, floor 0.3x\", \"Rebalance ships with new auto_mult upgrade (option, not pure nerf)\", \"Auto-attack is backbone; tap is meaningful-but-bounded bonus\", \"No 100x+ active burst\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 25,
+      "subject": "Task 25: Skill synergies + tap rhythm",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** Two cheap active-play rewards. (1) Skill Synergies: firing 2 active skills within 2s triggers a synergy (Storm of Steel, Lightning Strike, Grinding Vortex, Phantom Snare). (2) Tap rhythm: median of last 5 tap intervals in 0.35-0.55s builds rhythm_streak (cap 20), +2.5% tap per level. Never a penalty.\n\n**Files:**\n- Modify: engine/runner.py (synergy tracking, rhythm)\n- Modify: engine/skills.py (synergy effects)\n- Modify: ui/screen_game.py (synergy arc, rhythm display)\n- Modify: core/state.py (rhythm_streak — seeded by Task 5)\n- Test: tests/test_skill_synergy_rhythm.py\n\n**Acceptance Criteria:**\n- [ ] Firing 2 active skills within 2s triggers a named synergy with a glowing arc\n- [ ] Tap rhythm: median of last 5 tap intervals in 0.35-0.55s builds rhythm_streak (cap 20), +2.5% tap per level\n- [ ] Rhythm is strictly a bonus (floor 0, never a penalty)\n- [ ] A soft tick SFX gives reduced_motion a non-visual cue\n- [ ] The Speed Step kill-ramp-with-decay rework is NOT implemented\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_skill_synergy_rhythm.py -q`\n\n```json:metadata\n{\"files\": [\"engine/runner.py\", \"engine/skills.py\", \"ui/screen_game.py\", \"core/state.py\", \"tests/test_skill_synergy_rhythm.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_skill_synergy_rhythm.py -q\", \"acceptanceCriteria\": [\"Firing 2 active skills within 2s triggers named synergy with glowing arc\", \"Tap rhythm: median of last 5 tap intervals in 0.35-0.55s builds rhythm_streak (cap 20), +2.5% tap per level\", \"Rhythm strictly a bonus (floor 0, never a penalty)\", \"Soft tick SFX gives reduced_motion a non-visual cue\", \"Speed Step kill-ramp-with-decay NOT implemented (punishes idle)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 26,
+      "subject": "Task 26: Quest variety + Lore codex",
+      "status": "pending",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** Two low-cost content additions. (1) Quest variety: add weekly + chapter quests (only weekly + chapter, not 6+). (2) Lore/Bestiary Codex: category tabs + per-entity lore entries (pure data). Note gap #3: be aware of Heritage changes from Task 17.\n\n**Files:**\n- Modify: data/quests.py (weekly + chapter quest defs)\n- Modify: core/quests.py (weekly refresh, chapter progress)\n- Modify: ui/screen_bestiary.py (category tabs + lore)\n- Modify: ui/screen_quests.py (weekly/chapter display)\n- Test: tests/test_quest_codex.py\n\n**Acceptance Criteria:**\n- [ ] Weekly + chapter quest types added to the daily pool (not 6+ types)\n- [ ] Bestiary screen has category tabs + per-entity lore entries\n- [ ] Lore text is pure data (no new mechanic)\n- [ ] Quests remain legible (no quest-type sprawl)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_quest_codex.py -q`\n\n```json:metadata\n{\"files\": [\"data/quests.py\", \"core/quests.py\", \"ui/screen_bestiary.py\", \"ui/screen_quests.py\", \"tests/test_quest_codex.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_quest_codex.py -q\", \"acceptanceCriteria\": [\"Weekly + chapter quest types added to daily pool (not 6+ types)\", \"Bestiary screen has category tabs + per-entity lore entries\", \"Lore text is pure data (no new mechanic)\", \"Quests remain legible (no quest-type sprawl)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 27,
+      "subject": "Task 27: Juice polish + prestige UI",
+      "status": "pending",
+      "blockedBy": [
+        2,
+        5,
+        3,
+        12
+      ],
+      "description": "**Goal:** Low-effort polish + idle-teaching. (1) Count-up currency + gold milestones. (2) Skill cooldown chime + glow + progress fill. (3) Low-HP red vignette + boss enrage phase as VISUAL urgency cue (gap #5: NOT a mechanic). (4) Free respec-on-prestige. (5) Elixir-per-Minute readout. (6) Tome of Samsara anchor.\n\n**Files:**\n- Modify: ui/screen_game.py (count-up, cooldown glow, low-HP vignette)\n- Modify: ui/screen_ascend.py (elixir/min readout, recommended-ascend, Tome of Samsara)\n- Modify: ui/currency_fx.py (count-up animation)\n- Modify: core/ascend.py (free respec, Tome of Samsara)\n- Test: tests/test_juice_polish.py\n\n**Acceptance Criteria:**\n- [ ] Currency numbers count up (no instant snapping); gold milestones celebrate\n- [ ] Skill cooldown-ready chime + button glow + cooldown progress fill\n- [ ] Low-HP red vignette + boss enrage phase as a VISUAL urgency cue (NOT a boss enrage timer mechanic)\n- [ ] Free respec-on-prestige for the elixir skill tree\n- [ ] Elixir-per-Minute readout + recommended-ascend highlight from config.py curves\n- [ ] Tome of Samsara compounding anchor with invest ~30% tooltip\n- [ ] The unspent-elixir-as-multiplier is NOT implemented\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_juice_polish.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_game.py\", \"ui/screen_ascend.py\", \"ui/currency_fx.py\", \"core/ascend.py\", \"tests/test_juice_polish.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_juice_polish.py -q\", \"acceptanceCriteria\": [\"Currency numbers count up (no instant snapping); gold milestones celebrate\", \"Skill cooldown-ready chime + button glow + cooldown progress fill\", \"Low-HP red vignette + boss enrage as VISUAL urgency cue (NOT a mechanic)\", \"Free respec-on-prestige for elixir skill tree\", \"Elixir-per-Minute readout + recommended-ascend highlight from config.py curves\", \"Tome of Samsara compounding anchor with invest ~30% tooltip\", \"Unspent-elixir-as-multiplier NOT implemented\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 28,
+      "subject": "Task 28: Automation nodes",
+      "status": "pending",
+      "blockedBy": [
+        2,
+        5,
+        3,
+        12
+      ],
+      "description": "**Goal:** Automation nodes gated behind deep elixir investment. (1) Auto-cast Rope Hook + Shuriken under Energy. (2) Automation unlock nodes: auto-fireflies, auto-activate Energy, auto-ascend at threshold. (3) Auto-progress + farm-when-stuck fallback.\n\n**Files:**\n- Modify: engine/runner.py (auto-cast, auto-firefly, auto-ascend, farm-when-stuck)\n- Modify: data/skill_tree.py (automation nodes)\n- Modify: core/ascend.py (auto-ascend threshold)\n- Modify: core/offline.py (farm-when-stuck)\n- Test: tests/test_automation.py\n\n**Acceptance Criteria:**\n- [ ] Auto-cast Rope Hook + Shuriken under Energy, gated behind high-cost skill-tree nodes\n- [ ] Automation unlock nodes (auto-fireflies, auto-ascend at threshold) gated behind deep elixir investment\n- [ ] Auto-ascend respects the player's threshold\n- [ ] Auto-progress + farm-when-stuck fallback (road never dead-ends; farm advances lifetime_gold)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_automation.py -q`\n\n```json:metadata\n{\"files\": [\"engine/runner.py\", \"data/skill_tree.py\", \"core/ascend.py\", \"core/offline.py\", \"tests/test_automation.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_automation.py -q\", \"acceptanceCriteria\": [\"Auto-cast Rope Hook + Shuriken under Energy, gated behind high-cost skill-tree nodes\", \"Automation unlock nodes (auto-fireflies, auto-ascend at threshold) gated behind deep elixir\", \"Auto-ascend respects player's threshold\", \"Auto-progress + farm-when-stuck fallback (road never dead-ends; farm advances lifetime_gold)\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 29,
+      "subject": "Task 29: Parallax background layers",
+      "status": "pending",
+      "blockedBy": [
+        6,
+        11
+      ],
+      "description": "**Goal:** The single static background blit is the most dated thing on screen. Split the 2 hill layers into scrollable tiles + a near foliage layer. Cache per (zone_index, hue, layer_id); blit 3-5 layers at parallax offsets. Parallax accelerates 2x during Auto Katana.\n\n**Files:**\n- Modify: assets.py (layer cache + parallax)\n- Modify: ui/screen_game.py (multi-layer blit)\n- Modify: engine/runner.py (scroll accumulator)\n- Test: tests/test_parallax.py\n\n**Acceptance Criteria:**\n- [ ] 3-5 parallax layers blit at distinct scroll offsets from one accumulator\n- [ ] Parallax visibly accelerates 2x during Auto Katana\n- [ ] Layers pin to 0 scroll when reduced_motion is on\n- [ ] All layer surfaces cached per (zone, hue, layer) with convert_alpha\n- [ ] 60fps maintained with parallax enabled at the high tier\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_parallax.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"ui/screen_game.py\", \"engine/runner.py\", \"tests/test_parallax.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_parallax.py -q\", \"acceptanceCriteria\": [\"3-5 parallax layers blit at distinct scroll offsets from one accumulator\", \"Parallax visibly accelerates 2x during Auto Katana\", \"Layers pin to 0 scroll when reduced_motion on\", \"All layer surfaces cached per (zone, hue, layer) with convert_alpha\", \"60fps maintained with parallax at high tier\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 30,
+      "subject": "Task 30: Sprite-sheet animation",
+      "status": "pending",
+      "blockedBy": [
+        6,
+        11
+      ],
+      "description": "**Goal:** The ninja is the most-seen sprite and slash_anim/bob timers already exist but are wasted. Generate 4-8 frames at cache time, stack into one wide/tall SRCALPHA sheet, blit by sub-rect (subsurface is zero-copy). Frame selection from slash_anim + bob.\n\n**Files:**\n- Modify: assets.py (sprite-sheet generation + frame selection)\n- Modify: engine/ninja.py (anim state)\n- Modify: engine/enemy.py (enemy anim state)\n- Modify: ui/screen_game.py (sub-rect blit)\n- Test: tests/test_sprite_sheet_anim.py\n\n**Acceptance Criteria:**\n- [ ] Ninja has idle bob + slash lunge + hit flinch frames selected by slash_anim/bob timers\n- [ ] At least one enemy shape has a multi-frame idle cycle\n- [ ] Static frame 0 is the graceful-degradation fallback\n- [ ] Per-frame blit cost is no greater than the current static sprite\n- [ ] reduced_motion pins to frame 0\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_sprite_sheet_anim.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"engine/ninja.py\", \"engine/enemy.py\", \"ui/screen_game.py\", \"tests/test_sprite_sheet_anim.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_sprite_sheet_anim.py -q\", \"acceptanceCriteria\": [\"Ninja has idle bob + slash lunge + hit flinch frames selected by slash_anim/bob timers\", \"At least one enemy shape has multi-frame idle cycle\", \"Static frame 0 is graceful-degradation fallback\", \"Per-frame blit cost no greater than current static sprite\", \"reduced_motion pins to frame 0\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 31,
+      "subject": "Task 31: Per-zone weather particles",
+      "status": "pending",
+      "blockedBy": [
+        7,
+        11
+      ],
+      "description": "**Goal:** Zones differ only in hue. Weather particles (rain in Bamboo, ash in Volcano, snow in Sky, void drift in Void) make zones feel like places. WeatherFXSystem uses ParticleSystem2. Note gap #7: edits data/enemies.py ZONES alongside Tasks 12 + 21. Open question #5: ship for all 9 zones.\n\n**Files:**\n- Modify: data/enemies.py (weather key per zone)\n- Modify: engine/runner.py (WeatherFXSystem)\n- Modify: ui/screen_game.py (weather draw)\n- Test: tests/test_weather.py\n\n**Acceptance Criteria:**\n- [ ] At least 3 zones have distinct weather particle presets\n- [ ] Weather uses ParticleSystem2 (pooled, no per-frame allocations)\n- [ ] Particle counts capped per type and reduced under reduced_motion\n- [ ] reduced_motion falls back to a static tint overlay\n- [ ] 60fps maintained with weather enabled\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_weather.py -q`\n\n```json:metadata\n{\"files\": [\"data/enemies.py\", \"engine/runner.py\", \"ui/screen_game.py\", \"tests/test_weather.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_weather.py -q\", \"acceptanceCriteria\": [\"At least 3 zones have distinct weather particle presets\", \"Weather uses ParticleSystem2 (pooled, no per-frame allocations)\", \"Particle counts capped per type and reduced under reduced_motion\", \"reduced_motion falls back to static tint overlay\", \"60fps maintained with weather enabled\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 32,
+      "subject": "Task 32: Outline + shading + squash",
+      "status": "pending",
+      "blockedBy": [
+        6,
+        30
+      ],
+      "description": "**Goal:** Three cheap, high-impact graphics upgrades at cache time (zero per-frame cost), all gated by reduced_motion. Outline: vectorized outline_array() helper. Shading ramp: 4-6 step ramp. Squash-and-stretch: scale (1+k, 1-k) for ~80ms on slash/hit.\n\n**Files:**\n- Modify: assets.py (outline_array, shading ramp, squash-and-stretch)\n- Modify: ui/screen_game.py (squash-and-stretch blit)\n- Test: tests/test_outline_shading_squash.py\n\n**Acceptance Criteria:**\n- [ ] Every generated sprite has a 1px alpha-dilation outline at cache time\n- [ ] Sprites have a 4-6 step hue-shifted shading ramp (cool shadows, warm highlights)\n- [ ] Squash-and-stretch (1+k, 1-k) plays for ~80ms on slash/hit\n- [ ] reduced_motion disables squash-and-stretch (static frame)\n- [ ] Outline + shading add zero per-frame cost (cache-time only)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_outline_shading_squash.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"ui/screen_game.py\", \"tests/test_outline_shading_squash.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_outline_shading_squash.py -q\", \"acceptanceCriteria\": [\"Every generated sprite has 1px alpha-dilation outline at cache time\", \"Sprites have 4-6 step hue-shifted shading ramp (cool shadows, warm highlights)\", \"Squash-and-stretch (1+k, 1-k) plays ~80ms on slash/hit\", \"reduced_motion disables squash-and-stretch (static frame)\", \"Outline + shading add zero per-frame cost (cache-time only)\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 33,
+      "subject": "Task 33: Gear Forge UI",
+      "status": "pending",
+      "blockedBy": [
+        20
+      ],
+      "description": "**Goal:** The Forge UI: enhance/reroll/salvage/set bonuses + amber sink. No affix requires active play — the Forge is a one-time management action. Amber-Shop legendaries are a complementary amber sink. Depends on Task 20 (gear model).\n\n**Files:**\n- Modify: ui/screen_hero.py (Forge UI)\n- Modify: core/bonuses.py (salvage logic)\n- Test: tests/test_gear_forge.py\n\n**Acceptance Criteria:**\n- [ ] A Forge sink (enhance/reroll/salvage) using gold + amber\n- [ ] No affix requires active play\n- [ ] Amber-Shop legendaries are a complementary amber sink inside this system\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_gear_forge.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_hero.py\", \"core/bonuses.py\", \"tests/test_gear_forge.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_gear_forge.py -q\", \"acceptanceCriteria\": [\"Forge sink (enhance/reroll/salvage) using gold + amber\", \"No affix requires active play\", \"Amber-Shop legendaries are complementary amber sink inside this system\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 34,
+      "subject": "Task 34: Shadow Dungeon variants",
+      "status": "pending",
+      "blockedBy": [
+        23
+      ],
+      "description": "**Goal:** Story + Endless + Daily variants with a shared daily seed. The daily-dungeon seed gives the shared daily challenge. UI entry from the game screen. Depends on Task 23 (DungeonRunner).\n\n**Files:**\n- Modify: ui/screen_game.py (dungeon entry + variant select)\n- Modify: data/enemies.py (dungeon boss pool)\n- Modify: core/state.py (dungeon variant fields)\n- Modify: engine/runner.py (variant support)\n- Test: tests/test_dungeon_variants.py\n\n**Acceptance Criteria:**\n- [ ] Story + Endless + Daily variants with a shared daily seed\n- [ ] UI entry from the game screen\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_dungeon_variants.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_game.py\", \"data/enemies.py\", \"core/state.py\", \"engine/runner.py\", \"tests/test_dungeon_variants.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_dungeon_variants.py -q\", \"acceptanceCriteria\": [\"Story + Endless + Daily variants with shared daily seed\", \"UI entry from the game screen\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 35,
+      "subject": "Task 35: Reincarnation perks + Soul Tree",
+      "status": "pending",
+      "blockedBy": [
+        12,
+        3,
+        5
+      ],
+      "description": "**Goal:** The SINGLE meta-prestige design. Reset elixir/skill-tree/ascension for Souls + a permanent Soul Tree with named concrete perks (start at zone 3, +1 equip slot, keep 25% skill tree, 5th active skill). Gate behind Singularity + 10 ascensions. Cosmic Forge (max 10) anchors the rebuild. (Folds gp-reincarnation-core + gp-reincarnation-perks from the spec into one task.)\n\n**Files:**\n- Modify: core/ascend.py (reincarnation logic)\n- Modify: core/state.py (souls, soul_tree, cosmic_forge)\n- Modify: data/skill_tree.py (Soul Tree perks)\n- Modify: config.py (reincarnation constants)\n- Modify: ui/screen_ascend.py (Reincarnation + Soul Tree UI)\n- Test: tests/test_reincarnation_perks.py\n\n**Acceptance Criteria:**\n- [ ] A meta-prestige layer gated behind Singularity + 10 ascensions\n- [ ] Reset elixir/skill-tree/ascension for Souls + a permanent Soul Tree with named perks\n- [ ] Soul Tree nodes survive ALL resets (truly permanent)\n- [ ] Free respec so the hard reset isn't punishing\n- [ ] A persistent Cosmic Forge (max 10) anchors the rebuild\n- [ ] Transcendence, Ultra Ascension, and Transmigration are NOT implemented\n- [ ] Each Soul Tree perk is a run-breaking verb\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_reincarnation_perks.py -q`\n\n```json:metadata\n{\"files\": [\"core/ascend.py\", \"core/state.py\", \"data/skill_tree.py\", \"config.py\", \"ui/screen_ascend.py\", \"tests/test_reincarnation_perks.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_reincarnation_perks.py -q\", \"acceptanceCriteria\": [\"Meta-prestige layer gated behind Singularity + 10 ascensions\", \"Reset elixir/skill-tree/ascension for Souls + permanent Soul Tree with named perks\", \"Soul Tree nodes survive ALL resets (truly permanent)\", \"Free respec so hard reset isn't punishing\", \"Persistent Cosmic Forge (max 10) anchors rebuild\", \"Transcendence/Ultra Ascension/Transmigration NOT implemented\", \"Each Soul Tree perk is run-breaking verb (start zone 3, +1 equip, keep 25% skill tree, 5th skill)\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 36,
+      "subject": "Task 36: Hints + nav + tooltips",
+      "status": "pending",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** The onboarding fix. (1) HintEngine in core/hints.py: evaluates conditions per frame, glows next best action, seen-set in save.json. (2) 12 nav buttons replaced with categorized icon rail. (3) Tooltips for every upgrade/building/skill-tree node/pet with live values.\n\n**Files:**\n- Create: core/hints.py\n- Modify: core/state.py (seen_hints — seeded by Task 5)\n- Modify: ui/screen_game.py (hint glow, nav replacement)\n- Modify: ui/tooltip.py (tooltip registry)\n- Modify: ui/screen_upgrades.py, ui/screen_buildings.py, ui/screen_skilltree.py, ui/screen_pets.py (register tooltips)\n- Test: tests/test_hints_nav.py\n\n**Acceptance Criteria:**\n- [ ] A HintEngine evaluates conditions per frame and glows the next best action; seen-set prevents repeats\n- [ ] Hints are gated on not welcome_pending and not zone_fx.active\n- [ ] First-session conditions chain naturally (tap -> buy farm -> upgrade -> ascend)\n- [ ] The 12 nav buttons replaced with a categorized menu or icon rail with icon+label\n- [ ] 1-9 keyboard shortcuts preserved as a power-user fallback\n- [ ] Tooltips registered for every upgrade/building/skill-tree node/pet with live values\n- [ ] Menu stagger gated by reduced_motion\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_hints_nav.py -q`\n\n```json:metadata\n{\"files\": [\"core/hints.py\", \"core/state.py\", \"ui/screen_game.py\", \"ui/tooltip.py\", \"ui/screen_upgrades.py\", \"ui/screen_buildings.py\", \"ui/screen_skilltree.py\", \"ui/screen_pets.py\", \"tests/test_hints_nav.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_hints_nav.py -q\", \"acceptanceCriteria\": [\"HintEngine evaluates conditions per frame and glows next best action; seen-set prevents repeats\", \"Hints gated on not welcome_pending and not zone_fx.active\", \"First-session conditions chain naturally (tap -> buy farm -> upgrade -> ascend)\", \"12 nav buttons replaced with categorized menu/icon rail with icon+label\", \"1-9 keyboard shortcuts preserved as power-user fallback\", \"Tooltips registered for every upgrade/building/skill-tree node/pet with live values\", \"Menu stagger gated by reduced_motion\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 37,
+      "subject": "Task 37: Generative music + layered SFX",
+      "status": "pending",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** The game is SILENT except for 8 basic NumPy SFX. (1) Generative ambient music: NumPy generative engine (drone + koto melody + taiko), root note from zone hue, 4-bar re-rolled cycle. (2) Layered SFX with ADSR + noise + pitch variation. (3) SEPARATE music_on toggle + volume slider. Default off/very low.\n\n**Files:**\n- Modify: assets.py (generative music + layered SFX)\n- Modify: core/state.py (music_on, volume)\n- Modify: ui/screen_settings.py (music/SFX split + volume slider)\n- Modify: main.py (music playback loop)\n- Test: tests/test_music_sfx.py\n\n**Acceptance Criteria:**\n- [ ] A generative pentatonic koto/taiko loop keyed to zone hue with a 4-bar re-rolled cycle\n- [ ] Crossfade between zone segments (no jarring key changes)\n- [ ] Layered SFX with ADSR envelopes + noise layers + pitch variation + UI sounds\n- [ ] A SEPARATE music_on toggle distinct from SFX + a volume slider\n- [ ] Default to off or very low volume\n- [ ] sound_on gate respected; conservative noise-layer volumes\n- [ ] One music system, one SFX system\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_music_sfx.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"core/state.py\", \"ui/screen_settings.py\", \"main.py\", \"tests/test_music_sfx.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_music_sfx.py -q\", \"acceptanceCriteria\": [\"Generative pentatonic koto/taiko loop keyed to zone hue with 4-bar re-rolled cycle\", \"Crossfade between zone segments (no jarring key changes)\", \"Layered SFX with ADSR envelopes + noise layers + pitch variation + UI sounds\", \"SEPARATE music_on toggle distinct from SFX + volume slider\", \"Default to off or very low volume\", \"sound_on gate respected; conservative noise-layer volumes\", \"One music system, one SFX system (no competing duplicates)\"], \"modelTier\": \"frontier\"}\n```"
+    },
+    {
+      "id": 38,
+      "subject": "Task 38: Accessibility (contrast + font)",
+      "status": "pending",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** Current accessibility is only 2 toggles. (1) High-contrast mode: high-contrast palette + audit hardcoded colors to read from theme.C. (2) Dyslexia-friendly font: text scale (0.8x-1.6x) + dyslexia toggle (wider spacing / monospace fallback), cached. (3) Wire cb_symbols.py.\n\n**Files:**\n- Modify: ui/screen_settings.py (accessibility toggles)\n- Modify: theme.py (high-contrast palette, text scale, dyslexia font)\n- Modify: ui/cb_symbols.py (wire it)\n- Modify: core/state.py (text_scale, dyslexia_font, high_contrast)\n- Modify: engine/boss_fx.py (hardcoded _GLOW -> theme.C)\n- Test: tests/test_accessibility.py\n\n**Acceptance Criteria:**\n- [ ] A high-contrast mode toggle with a high-contrast palette; all hardcoded colors read from theme.C\n- [ ] A text scale multiplier (0.8x-1.6x) toggle\n- [ ] A dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\n- [ ] Dyslexia letter-spacing rendering is cached (keyed by size, bold, dyslexia)\n- [ ] cb_symbols.py wired\n- [ ] High-contrast mode ships independently of music\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_settings.py\", \"theme.py\", \"ui/cb_symbols.py\", \"core/state.py\", \"engine/boss_fx.py\", \"tests/test_accessibility.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q\", \"acceptanceCriteria\": [\"High-contrast mode toggle with high-contrast palette; all hardcoded colors read from theme.C\", \"Text scale multiplier (0.8x-1.6x) toggle\", \"Dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\", \"Dyslexia letter-spacing rendering cached (keyed by size, bold, dyslexia)\", \"cb_symbols.py wired\", \"High-contrast mode ships independently of music\"], \"modelTier\": \"standard\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-28T00:00:00Z"
+}
