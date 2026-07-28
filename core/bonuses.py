@@ -43,7 +43,15 @@ def _skill_tree_provider(state: GameState) -> dict[str, float]:
 
 
 def _pets_provider(state: GameState) -> dict[str, float]:
-    """Equipped pets: bond level × buff_per_level per pet's buff_key."""
+    """Equipped pets: bond level × buff_per_level per pet's buff_key.
+
+    Star levels (1-12, from duplicate eggs) and prestige counts (from
+    Spirit Embers) are second progression axes on top of bond: each
+    adds a small multiplier on top of the bond-based bonus, so a
+    maxed pet (bond 10 + 12 stars + N prestiges) still has something
+    to chase. The multipliers fold into ``pet_bonus`` so every
+    consumer of ``aggregate_bonuses`` reads them unmodified.
+    """
     out: dict[str, float] = {}
     for pid in state.equipped_pets:
         bond = state.pet_bond(pid)
@@ -52,7 +60,38 @@ def _pets_provider(state: GameState) -> dict[str, float]:
         p = pet_def.BY_ID.get(pid)
         if p is None:
             continue
-        out[p.buff_key] = out.get(p.buff_key, 0.0) + pet_def.pet_bonus(p, bond)
+        stars = state.pet_stars.get(pid, 0)
+        prestiges = state.pet_prestiges.get(pid, 0)
+        out[p.buff_key] = out.get(p.buff_key, 0.0) + pet_def.pet_bonus(p, bond, stars, prestiges)
+    return out
+
+
+def _pets_passive_provider(state: GameState) -> dict[str, float]:
+    """Owned-but-unequipped pets contribute a fraction of their bonus.
+
+    The capstone fractions make the 12-pet collection meaningful instead
+    of "equip the 3 best": a bond-10 pet on the bench still pulls its
+    weight (50%), and a bond-5 pet contributes 25%. Below bond 5 the
+    pet contributes nothing passively — no free lunch for a fresh pull.
+
+    The fraction is applied to the same ``pet_bonus`` the equipped
+    provider uses (including the star + prestige multipliers), so the
+    depth axes deepen the passive contribution too. Equipped pets are
+    skipped here — they get the full bonus from ``_pets_provider``.
+    """
+    out: dict[str, float] = {}
+    for pid, bond in state.pets.items():
+        if pid in state.equipped_pets:
+            continue
+        if bond < 5:
+            continue
+        p = pet_def.BY_ID.get(pid)
+        if p is None:
+            continue
+        frac = 0.25 if bond < 10 else 0.5
+        stars = state.pet_stars.get(pid, 0)
+        prestiges = state.pet_prestiges.get(pid, 0)
+        out[p.buff_key] = out.get(p.buff_key, 0.0) + pet_def.pet_bonus(p, bond, stars, prestiges) * frac
     return out
 
 
@@ -60,6 +99,7 @@ def _pets_provider(state: GameState) -> dict[str, float]:
 # are summed additively by key.
 register_provider(_skill_tree_provider)
 register_provider(_pets_provider)
+register_provider(_pets_passive_provider)
 
 
 def aggregate_bonuses(state: GameState) -> dict[str, float]:

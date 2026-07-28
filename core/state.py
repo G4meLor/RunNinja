@@ -104,6 +104,7 @@ class GameState:
     epic_research: set[str] = field(default_factory=set)  # permanent meta-tree nodes (gp-epic-research)
     pet_stars: dict[str, int] = field(default_factory=dict)  # pid -> star level 1-12 (cnt-pet-depth)
     spirit_embers: int = 0             # nested pet-prestige currency (cnt-pet-depth)
+    pet_prestiges: dict[str, int] = field(default_factory=dict)  # pid -> prestige count (cnt-pet-depth)
     pity_tokens: int = 0               # gacha spark-shop currency (gp-gacha-fairness)
     banner_pulls: int = 0              # pulls on the current banner (gp-gacha-fairness)
     dungeon_active: bool = False       # is a shadow dungeon running (cnt-shadow-dungeon)
@@ -274,6 +275,7 @@ def _migrate_v2_to_v3(d: dict) -> dict:
     # cnt-pet-depth
     d.setdefault("pet_stars", {})
     d.setdefault("spirit_embers", 0)
+    d.setdefault("pet_prestiges", {})
     # gp-gacha-fairness
     d.setdefault("pity_tokens", 0)
     d.setdefault("banner_pulls", 0)

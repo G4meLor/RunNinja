@@ -123,9 +123,10 @@ def _buff_desc(pet: pet_def.PetDef) -> str:
     return f"{key} +{val:g} per bond."
 
 
-def _bonus_value_text(pet: pet_def.PetDef, bond: int) -> str:
-    """The bonus value contributed at ``bond``, formatted for display."""
-    val = pet_def.pet_bonus(pet, bond)
+def _bonus_value_text(pet: pet_def.PetDef, bond: int, stars: int = 0,
+                     prestiges: int = 0) -> str:
+    """The bonus value contributed at ``bond`` (+ stars + prestiges), for display."""
+    val = pet_def.pet_bonus(pet, bond, stars, prestiges)
     key = pet.buff_key
     if key in _PCT_KEYS:
         sign = "+" if val >= 0 else "-"
@@ -316,10 +317,12 @@ class PetDetailPanel:
         draw_bar(surf, bar, bond / BOND_MAX,
                  fill=C.soul, bg=C.mp_bg, border=C.panel_border)
 
-        # ---- Bonus value at current bond ----
+        # ---- Bonus value at current bond (+ stars + prestiges) ----
+        stars = state.pet_stars.get(self.pid, 0)
+        prestiges = state.pet_prestiges.get(self.pid, 0)
         draw_text(surf, "Bonus", (r.x + 16, r.y + 276),
                   font_sm(), C.text_dim)
-        draw_text(surf, _bonus_value_text(pet, bond),
+        draw_text(surf, _bonus_value_text(pet, bond, stars, prestiges),
                   (r.right - 96, r.y + 276),
                   font_sm(bold=True), C.soul)
 

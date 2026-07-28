@@ -112,6 +112,7 @@ _SCHEMA: dict[str, type] = {
     "epic_research": list,
     "pet_stars": dict,
     "spirit_embers": int,
+    "pet_prestiges": dict,
     "pity_tokens": int,
     "banner_pulls": int,
     "dungeon_active": bool,

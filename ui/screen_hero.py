@@ -109,7 +109,9 @@ class HeroScreen:
             p = pet_def.BY_ID.get(pid)
             if p is None:
                 continue
-            pet_b[p.buff_key] = pet_b.get(p.buff_key, 0.0) + pet_def.pet_bonus(p, bond)
+            stars = state.pet_stars.get(pid, 0)
+            prestiges = state.pet_prestiges.get(pid, 0)
+            pet_b[p.buff_key] = pet_b.get(p.buff_key, 0.0) + pet_def.pet_bonus(p, bond, stars, prestiges)
         tier_mult = _ascend_tier_mult(state)
         return {"tier_mult": tier_mult, "skill_b": skill_b, "pet_b": pet_b, "evo": evo}
 
@@ -375,7 +377,9 @@ class HeroScreen:
                 if p is None:
                     continue
                 bond = state.pet_bond(pid)
-                bonus = pet_def.pet_bonus(p, bond)
+                stars = state.pet_stars.get(pid, 0)
+                prestiges = state.pet_prestiges.get(pid, 0)
+                bonus = pet_def.pet_bonus(p, bond, stars, prestiges)
                 draw_panel(surf, r, fill=C.panel_hi, border=C.gold, border_w=1)
                 ps = pet_surface(p.id, p.hue, 48)
                 surf.blit(ps, (r.x + 8, r.y + 4))

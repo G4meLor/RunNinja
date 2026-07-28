@@ -5,10 +5,41 @@ into the aggregate bonus dict the engine reads.  Each pet has a bond
 level (0–10) raised by feeding (gold or amber).  Some pets are unlocked
 by skill-tree nodes (e.g. Squirrel after Rope Hook, Dragon after 5
 ascensions).
+
+**Pet depth (Task 14):** the 12-pet collection has two second-axis
+progression systems on top of bond:
+
+  * **Star levels (1-12)** from duplicate eggs. Each duplicate pull
+    (after the pet is already owned) increments ``pet_stars[pid]``
+    (capped at 12). Each star adds a small multiplier on top of the
+    bond-based bonus — so a maxed pet (bond 10 + 12 stars) still has
+    something to chase.
+
+  * **Spirit Embers** from nested pet prestige. A pet at max bond (10)
+    can be prestiged: the bond resets to 0, the cap stays at 10, and
+    Spirit Embers are paid out (scaling with the prestige count). The
+    Ember currency is nested in the existing pet-progression layer —
+    it's the re-grind reward, not a separate economy. Each prestige
+    applies a permanent multiplier on the pet's bonus so the
+    post-prestige bonus (once bond is rebuilt to 10) outpaces the
+    pre-prestige bonus at bond 10 — the re-grind is clearly worth it.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+
+# ---------------------------------------------------------------------------
+# Pet depth tunables
+# ---------------------------------------------------------------------------
+PET_STAR_MAX = 12            # star levels cap (1-12 from duplicate eggs)
+PET_STAR_BONUS_PER = 0.01    # +1% of bond-based bonus per star level
+PET_PRESTIGE_BONUS_PER = 0.10  # +10% of bond-based bonus per prestige count
+# Spirit Ember payout per prestige: base + (prestige_count * step).
+# The first prestige pays 50, the second 100, the third 150 — each
+# re-grind is clearly worth more than the last.
+PET_PRESTIGE_PAYOUT_BASE = 50
+PET_PRESTIGE_PAYOUT_STEP = 50
 
 
 @dataclass
@@ -68,5 +99,28 @@ def is_unlocked(pet: PetDef, state) -> bool:
     return True
 
 
-def pet_bonus(pet: PetDef, bond: int) -> float:
-    return pet.buff_per_level * bond
+def pet_bonus(pet: PetDef, bond: int, stars: int = 0, prestiges: int = 0) -> float:
+    """The bonus a pet contributes at ``bond`` with optional depth axes.
+
+    The base is ``buff_per_level * bond`` (unchanged). Two second-axis
+    multipliers fold on top:
+
+      * **Stars** (1-12 from duplicate eggs): ``+PET_STAR_BONUS_PER``
+        of the base per star, so 12 stars = +12% of the bond-based
+        bonus.
+      * **Prestiges** (from Spirit Embers): ``+PET_PRESTIGE_BONUS_PER``
+        of the base per prestige, so the post-prestige bonus (once
+        bond is rebuilt to 10) outpaces the pre-prestige bonus at
+        bond 10 — the re-grind is clearly worth it.
+
+    Both multipliers are additive on the base, so the call site can
+    pass ``stars`` and ``prestiges`` (or omit them) and get the right
+    number without changing the contract for callers that still pass
+    just ``(pet, bond)``.
+    """
+    base = pet.buff_per_level * bond
+    if stars <= 0 and prestiges <= 0:
+        return base
+    star_mult = PET_STAR_BONUS_PER * max(0, min(PET_STAR_MAX, stars))
+    prest_mult = PET_PRESTIGE_BONUS_PER * max(0, prestiges)
+    return base * (1.0 + star_mult + prest_mult)
