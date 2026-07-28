@@ -62,22 +62,40 @@ class QuestsScreen:
             y += 64
 
         # Achievements.
-        draw_text(surf, "Achievements", (60, 460), font_lg(bold=True), C.text)
-        y = 500
-        for a in q.ACHIEVEMENTS[:7]:
+        # Visible (non-hidden) achievements are shown in the main list;
+        # hidden/secret achievements are shown in a separate "???"
+        # section below so their cryptic hints are ALWAYS rendered
+        # (gp-permanent-scaling: the player has an in-game path to the
+        # unlock that is NOT wiki-dependent). The previous ``[:7]``
+        # slice cut the list before the hidden achievements (positions
+        # 19+) so the hints were never displayed.
+        y = 390
+        draw_text(surf, "Achievements", (60, y), font_lg(bold=True), C.text)
+        y += 34
+        visible = [a for a in q.ACHIEVEMENTS if not getattr(a, "hidden", False)]
+        hidden = [a for a in q.ACHIEVEMENTS if getattr(a, "hidden", False)]
+        for a in visible[:6]:
             unlocked = a.id in state.achievements
-            r = pygame.Rect(60, y, 560, 24)
             col = C.text_good if unlocked else C.text_muted
-            # Hidden/secret achievements (gp-permanent-scaling): show the
-            # cryptic hint (not the full desc) until unlocked -- the
-            # player has an in-game path to the unlock that is NOT
-            # wiki-dependent. After unlock, show the full name + desc.
-            if getattr(a, "hidden", False) and not unlocked:
-                label = "?  " + a.hint
+            draw_text(surf, ("✓ " if unlocked else "○ ") + a.name + "  —  " + a.desc,
+                      (60, y), font_xs(), col)
+            y += 22
+        # Hidden / secret achievements -- a separate "???" section. The
+        # cryptic hint is shown until unlocked (NOT the full desc) so
+        # the player has an in-game path to the unlock that is NOT
+        # wiki-dependent. After unlock, show the full name + desc.
+        y += 10
+        draw_text(surf, "???  Hidden", (60, y), font_md(bold=True), C.gold)
+        y += 24
+        for a in hidden:
+            unlocked = a.id in state.achievements
+            col = C.text_good if unlocked else C.text_muted
+            if unlocked:
+                label = "✓ " + a.name + "  —  " + a.desc
             else:
-                label = ("✓ " if unlocked else "○ ") + a.name + "  —  " + a.desc
-            draw_text(surf, label, (r.x, r.y), font_xs(), col)
-            y += 26
+                label = "?  " + a.hint
+            draw_text(surf, label, (60, y), font_xs(), col)
+            y += 22
 
         for b in self.buttons:
             b.draw(surf)

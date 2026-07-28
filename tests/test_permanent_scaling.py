@@ -259,6 +259,45 @@ def test_hidden_achievements_still_check(pygame_headless):
             pytest.fail(f"hidden achievement {a.id} check raised: {e}")
 
 
+def test_hidden_achievements_reachable_in_ui(pygame_headless):
+    """The quests screen iterates ALL achievements (not just ``[:7]``)
+    so the hidden/secret achievements' cryptic hints are rendered. The
+    previous ``[:7]`` slice cut the list before the hidden achievements
+    (positions 19+) so the hints were never displayed -- the player had
+    no in-game path to discover them (wiki-dependent). This test guards
+    the fix: the screen's draw path must reach the hidden achievements.
+
+    The stable guard is a source-level check (inspect the ``draw``
+    method's source): the screen must NOT slice ``ACHIEVEMENTS[:7]``
+    and must reference the ``hidden`` field (so the cryptic hints are
+    rendered). A full draw smoke test is not used here because
+    ``gradient_v`` (called by ``draw``) needs ``pygame.display`` to be
+    initialized, and other tests in the suite call ``pygame.quit()``
+    which tears down the display mid-session; the source-level guard is
+    the robust check that does not depend on display state.
+    """
+    import inspect
+    from data.quests import ACHIEVEMENTS
+    from ui.screen_quests import QuestsScreen
+    # Source-level guard: the draw method must NOT slice ``[:7]`` (the
+    # old cut that hid the hidden achievements). It must iterate the
+    # full ``ACHIEVEMENTS`` list (or a filtered view that includes the
+    # hidden ones).
+    src = inspect.getsource(QuestsScreen.draw)
+    assert "ACHIEVEMENTS[:7]" not in src, (
+        "QuestsScreen.draw slices ACHIEVEMENTS[:7] -- hidden achievements "
+        "are never displayed (the cryptic hints are not rendered)")
+    # The draw method must reference the hidden achievements (either by
+    # filtering on ``hidden`` or by iterating the full list).
+    assert "hidden" in src, (
+        "QuestsScreen.draw does not reference the ``hidden`` field -- "
+        "the cryptic hints are not rendered")
+    # The hidden achievements are in the full list -- the screen must
+    # have iterated them (the source guard above enforces this).
+    hidden = [a for a in ACHIEVEMENTS if getattr(a, "hidden", False)]
+    assert len(hidden) >= 2
+
+
 # ---------------------------------------------------------------------------
 # Smoke: the providers compose with the rest of the bonus stack
 # ---------------------------------------------------------------------------
