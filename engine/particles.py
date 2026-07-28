@@ -133,14 +133,22 @@ class Particle:
 class ParticleSystem2:
     """Pooled, shape-aware particle system with additive glow.
 
-    Construct once (e.g. in ``Game.__init__`` next to the legacy
-    ``ParticleSystem``), call the spawners on events, then ``update(dt)``
-    and ``draw(surf)`` every frame.
+    Construct once (e.g. in ``Game.__init__`` as the sole particle system),
+    call the spawners on events, then ``update(dt)`` and ``draw(surf)``
+    every frame.
     """
+
+    # Default active-particle cap. Generous enough that the default tier
+    # never visually clips a combat peak, but bounded so a runaway spawn
+    # loop can't balloon the active list. Task 10's render-tier will
+    # rebind this per quality tier (low/med/high); for now it is a fixed
+    # max.
+    DEFAULT_MAX_PARTICLES = 600
 
     def __init__(self, *, bounce: bool = False,
                  bounce_bounds: Optional[Tuple[int, int, int, int]] = None,
-                 default_glow: bool = False) -> None:
+                 default_glow: bool = False,
+                 max_particles: Optional[int] = None) -> None:
         self._active: list[Particle] = []
         self._pool: list[Particle] = []
         self._scratch_cache: dict[tuple, pygame.Surface] = {}
@@ -149,6 +157,9 @@ class ParticleSystem2:
         self.bounce_bounds: Tuple[int, int, int, int] = (
             bounce_bounds if bounce_bounds is not None else _DEFAULT_BOUNDS)
         self.default_glow = default_glow
+        self.max_particles: int = (
+            max_particles if max_particles is not None
+            else self.DEFAULT_MAX_PARTICLES)
 
     # ------------------------------------------------------------------
     # Pool plumbing
@@ -161,6 +172,25 @@ class ParticleSystem2:
     def _release(self, p: Particle) -> None:
         p.alive = False
         self._pool.append(p)
+
+    def _spawn(self, count: int) -> list[Particle]:
+        """Acquire up to ``count`` particles without exceeding the cap.
+
+        Returns the list of freshly acquired (not yet reset) particles.
+        Spawners reset each one with the per-call parameters. The cap
+        keeps the active list bounded per quality tier; once it is hit,
+        further spawns in the same call are dropped (the visual stays
+        readable — a saturated burst just renders fewer shards).
+        """
+        room = self.max_particles - len(self._active)
+        if room <= 0:
+            return []
+        n = count if count < room else room
+        out: list[Particle] = []
+        for _ in range(n):
+            out.append(self._acquire())
+        self._active.extend(out)
+        return out
 
     def _scratch(self, shape: str, bucket: int) -> pygame.Surface:
         """A cached SRCALPHA scratch for (shape, size-bucket) drawing."""
@@ -198,17 +228,15 @@ class ParticleSystem2:
         if bounce is None:
             bounce = self.bounce
         r = rng()
-        for _ in range(count):
+        for p in self._spawn(count):
             ang = r.uniform(0, math.tau)
             sp = r.uniform(speed * 0.4, speed)
-            p = self._acquire()
             p.reset(x, y, math.cos(ang) * sp, math.sin(ang) * sp,
                     life * r.uniform(0.6, 1.2), color,
                     size=size, gravity=gravity, shape=shape, glow=glow,
                     fade_color=fade_color, bounce=bounce, damping=damping,
                     spin=r.uniform(0, math.tau),
                     spin_speed=r.uniform(-6.0, 6.0))
-            self._active.append(p)
 
     def trail(self, x: float, y: float, color: Tuple[int, int, int],
               count: int = 1, size: int = 2, *, shape: str = SHAPE_CIRCLE,
@@ -218,15 +246,13 @@ class ParticleSystem2:
         if glow is None:
             glow = self.default_glow
         r = rng()
-        for _ in range(count):
-            p = self._acquire()
+        for p in self._spawn(count):
             p.reset(x + r.uniform(-2, 2), y + r.uniform(-2, 2),
                     r.uniform(-10, 10), r.uniform(-10, 10),
                     life, color, size=size, gravity=0.0, shape=shape,
                     glow=glow, fade_color=fade_color,
                     spin=r.uniform(0, math.tau),
                     spin_speed=r.uniform(-2.0, 2.0))
-            self._active.append(p)
 
     def burst_ring(self, x: float, y: float, color: Tuple[int, int, int],
                    radius: float = 60, count: int = 24, life: float = 0.5,
@@ -245,19 +271,17 @@ class ParticleSystem2:
         if glow is None:
             glow = self.default_glow
         r = rng()
-        for i in range(count):
+        for i, p in enumerate(self._spawn(count)):
             ang = (i / count) * math.tau + r.uniform(-0.05, 0.05)
             sp = expand * r.uniform(0.7, 1.0)
             px = x + math.cos(ang) * radius
             py = y + math.sin(ang) * radius
-            p = self._acquire()
             p.reset(px, py, math.cos(ang) * sp, math.sin(ang) * sp,
                     life * r.uniform(0.8, 1.2), color,
                     size=size, gravity=gravity, shape=shape, glow=glow,
                     fade_color=fade_color,
                     spin=(ang if spin else r.uniform(0, math.tau)),
                     spin_speed=r.uniform(-4.0, 4.0))
-            self._active.append(p)
 
     def spark_burst(self, x: float, y: float, color: Tuple[int, int, int],
                     count: int = 10, speed: float = 200, life: float = 0.3,
@@ -277,17 +301,15 @@ class ParticleSystem2:
         if bounce is None:
             bounce = self.bounce
         r = rng()
-        for _ in range(count):
+        for p in self._spawn(count):
             ang = r.uniform(0, math.tau)
             sp = r.uniform(speed * 0.6, speed)
-            p = self._acquire()
             p.reset(x, y, math.cos(ang) * sp, math.sin(ang) * sp,
                     life * r.uniform(0.7, 1.2), color,
                     size=size, gravity=gravity, shape=SHAPE_SPARK,
                     glow=glow, fade_color=fade_color,
                     bounce=bounce, damping=damping,
                     spin=ang, spin_speed=r.uniform(-3.0, 3.0))
-            self._active.append(p)
 
     # ------------------------------------------------------------------
     # Update  (in-place compaction — no list allocation)

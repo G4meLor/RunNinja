@@ -20,7 +20,8 @@ from utils import rng
 from core.state import GameState
 from core.login_streak import check_streak, apply_streak
 from engine.runner import Runner
-from assets import ParticleSystem, init_sfx
+from assets import init_sfx
+from engine.particles import ParticleSystem2
 from ui.screen_menu import MenuScreen
 from ui.screen_game import GameScreen
 from ui.screen_buildings import BuildingsScreen
@@ -61,7 +62,13 @@ class Game:
             self._login_reward = None
 
         self.runner = Runner(self.state)
-        self.particles = ParticleSystem()
+        # ParticleSystem2 is the sole particle system: fully pooled (zero
+        # per-frame Surface allocations after warm-up) and API-compatible
+        # with the legacy assets.ParticleSystem (burst/trail/update/draw).
+        # The death/firefly/combo FX systems keep their own internal pools
+        # for now (they are already pooled); this is the main road-FX pool.
+        # Task 10's render tier will rebind max_particles per quality.
+        self.particles = ParticleSystem2()
         init_sfx()
         # Wire the death-FX screen-shake callback (boss deaths shake).
         self.runner.death_fx.on_shake = self.shake
@@ -214,8 +221,8 @@ class Game:
         self.screens[self.current_screen].update(dt)
 
     def _update_particles(self, dt):
-        # Death bursts are now handled by DeathFxSystem (wired in the runner),
-        # so this just advances the legacy particle pool used for hit sparks.
+        # Death bursts are handled by DeathFxSystem (wired in the runner);
+        # this advances the pooled ParticleSystem2 used for hit sparks.
         self.particles.update(dt)
 
     def _draw_fps(self):
