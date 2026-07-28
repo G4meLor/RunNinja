@@ -234,6 +234,46 @@ def test_away_mastery_cap_with_huge_away_pct(pygame_headless):
     assert offline_per_sec < active
 
 
+def test_away_mastery_cap_accounts_for_combo_step(pygame_headless):
+    """The cap's active reference mirrors the runner's combo_mult INCLUDING
+    the ``combo_step`` run upgrade (which reduces ``tau``, raising the
+    combo multiplier at a given combo count). Without the upgrade the
+    active reference would underestimate the real active rate, making the
+    cap too low and underpaying the player offline.
+    """
+    import math
+    from core.state import GameState
+    from core.offline import active_per_sec
+    from engine.runner import Runner, COMBO_MULT_CAP
+    import config as cfg
+    from core.game_economy import _upgrade_pct
+    state = GameState()
+    state.upgrades = {"combo_step": 10}
+    state.combo = 50
+    state.buildings = {"farm": 100}
+    state.zone_index = 5
+    # The runner's combo_mult at combo 50 with combo_step=10.
+    r = Runner(state)
+    runner_combo = r.combo_mult()
+    # The tau active_per_sec should be using (with the combo_step upgrade
+    # + the 5.0 floor).
+    tau = max(5.0, cfg.COMBO_TAU - _upgrade_pct(state, "combo_step"))
+    expected_combo = 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-state.combo / tau))
+    assert runner_combo == pytest.approx(expected_combo), (
+        "active_per_sec's tau does not account for combo_step -- the cap "
+        "would underestimate the active rate.")
+    # And the cap holds: offline stays strictly below the (accurate)
+    # active+boosted rate.
+    from core.offline import compute, AWAY_CAP
+    active = active_per_sec(state)
+    state.last_saved = time.time() - 3600
+    report = compute(state)
+    assert report["applied"] is True
+    offline_per_sec = report["gold"] / report["seconds"]
+    assert offline_per_sec <= active * AWAY_CAP + 1e-6
+    assert offline_per_sec < active
+
+
 # ---------------------------------------------------------------------------
 # Smoke: the provider composes with the rest of the bonus stack
 # ---------------------------------------------------------------------------

@@ -139,9 +139,13 @@ def active_per_sec(state: GameState) -> float:
     The combo + gold multipliers are the SAME ones the runner uses
     (``combo_mult`` from ``engine.runner`` + ``gold_mult`` from
     ``engine.runner``), computed here without importing the runner (to
-    avoid a circular import): the combo multiplier is the asymptotic
-    ``1 + (COMBO_MULT_CAP - 1) * (1 - exp(-c / COMBO_TAU))`` and the gold
-    multiplier is the flat ``1 + gold_pct + godai_fire + gold_drop +
+    avoid a circular import). The combo multiplier is the asymptotic
+    ``1 + (COMBO_MULT_CAP - 1) * (1 - exp(-c / tau))`` where
+    ``tau = max(5.0, COMBO_TAU - combo_step_upgrade)`` -- INCLUDING the
+    ``combo_step`` run upgrade (the same one the runner's
+    ``combo_mult`` applies), so the cap accurately reflects the active
+    rate with the player's current combo ramp. The gold multiplier is
+    the flat ``1 + gold_pct + godai_fire + gold_drop +
     coin_token_pct``. The combo multiplier is capped at
     ``COMBO_MULT_CAP`` (3.0) by construction, so the active reference is
     bounded -- the cap is a real cap, not a moving target.
@@ -166,10 +170,15 @@ def active_per_sec(state: GameState) -> float:
     kills_per_sec = 1.0 / max(cfg.SPAWN_INTERVAL_MIN, interval)
     # Combo multiplier (mirrors engine.runner.Runner.combo_mult, capped
     # at COMBO_MULT_CAP by construction -- the asymptotic curve can never
-    # exceed the cap).
+    # exceed the cap). ``tau`` includes the ``combo_step`` run upgrade
+    # (the same one the runner applies: ``COMBO_TAU - combo_step``,
+    # floored at 5.0) so the cap accurately reflects the active rate with
+    # the player's current combo ramp. The ``_upgrade_pct`` helper is the
+    # same one ``core.game_economy`` exposes (and the runner's
+    # ``_upgrade_val`` is just an alias for it).
     from engine.runner import COMBO_MULT_CAP
     c = state.combo
-    tau = cfg.COMBO_TAU
+    tau = max(5.0, cfg.COMBO_TAU - _upgrade_pct(state, "combo_step"))
     combo_m = 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-c / tau))
     # Gold multiplier (mirrors engine.runner.Runner.gold_mult).
     gold_m = (1.0 + evo.get("gold_pct", 0.0) + evo.get("godai_fire", 0.0)
