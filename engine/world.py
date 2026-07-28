@@ -22,6 +22,9 @@ class World:
         self.boss_active = False
         self.firefly_timer = 0.0
         self.fireflies: list = []   # engine.firefly.Firefly
+        # Runner-owned EventBus (wired by the Runner via set_event_bus).
+        # When None, the legacy module-global callbacks below are used.
+        self._bus = None
 
     @property
     def zone(self) -> dict:
@@ -98,14 +101,15 @@ class World:
         boss = spawn_boss(bdef, hp=self.zone_hp(bdef), dmg=self.zone_dmg(bdef),
                           gold=self.zone_gold(bdef))
         self.enemies.append(boss)
-        # Boss intro FX (the runner wires this callback).
-        if self.on_boss_spawn is not None:
-            try:
-                self.on_boss_spawn(boss.name, boss.hue)
-            except Exception:
-                pass
+        # Boss intro FX: emit via the bus (preferred). The deprecated
+        # ``on_boss_spawn`` global is wired by the Runner to forward to
+        # the bus, so we do NOT also call it directly here — that would
+        # double-fire the event.
+        if self._bus is not None:
+            self._bus.emit("boss_spawn", boss.name, boss.hue)
 
-    # Hook the runner sets to trigger boss intro FX.
+    # Hook the runner sets to trigger boss intro FX (deprecated; the bus
+    # is preferred).
     on_boss_spawn = None
 
     def _spawn_firefly(self) -> None:
@@ -114,12 +118,12 @@ class World:
         y = rng().uniform(120, 380)
         ff = spawn_firefly(x, y, size_bonus=self.firefly_size_bonus)
         self.fireflies.append(ff)
-        # Firefly spawn FX (the runner wires this callback).
-        if self.on_firefly_spawn is not None:
-            try:
-                self.on_firefly_spawn(ff)
-            except Exception:
-                pass
+        # Firefly spawn FX: emit via the bus (preferred). The deprecated
+        # ``on_firefly_spawn`` global is wired by the Runner to forward to
+        # the bus, so we do NOT also call it directly here — that would
+        # double-fire the event.
+        if self._bus is not None:
+            self._bus.emit("firefly_spawn", ff)
 
     # Set by the runner so firefly size scales with the fly_size1 bonus.
     firefly_size_bonus = 0.0
@@ -130,6 +134,10 @@ class World:
             self.boss_active = False
             self.zone_index += 1
             self.zone_distance = 0.0
+
+    def set_event_bus(self, bus) -> None:
+        """Wire the Runner-owned EventBus. Called once by the Runner."""
+        self._bus = bus
 
     def reset_for_ascension(self) -> None:
         self.zone_index = 0

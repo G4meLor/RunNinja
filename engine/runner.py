@@ -18,6 +18,7 @@ from engine.enemy import Enemy, tick_combat, tap as tap_enemy, PARTY_X
 from engine.firefly import Firefly, update_fireflies, catch_firefly
 from engine.skills import ActiveSkill, make_skill, tick_skill, can_fire, fire as fire_skill
 from engine.world import World
+from engine.eventbus import EventBus
 from engine.fx import FXLayer
 from engine.death_fx import DeathFxSystem
 from engine.combo_fx import ComboFxSystem
@@ -51,13 +52,25 @@ class Runner:
         # Active skills (only those unlocked).
         self.skills: dict[str, ActiveSkill] = {}
         self._refresh_skills()
-        # Wire combat FX callbacks.
+        # Runner-owned EventBus: engine modules emit events; the runner
+        # subscribes the FX systems. Replaces the module-global FX
+        # callbacks (kept as deprecated aliases that forward to the bus).
+        self.bus = EventBus()
+        self.bus.on("enemy_dmg", self._on_enemy_dmg)
+        self.bus.on("ninja_dmg", self._on_ninja_dmg)
+        self.bus.on("boss_spawn", self._on_boss_spawn)
+        self.bus.on("firefly_spawn", self.firefly_fx.on_spawn)
+        # Wire the bus into the engine modules.
         from engine import enemy as _e
-        _e.on_enemy_dmg = self._on_enemy_dmg
-        _e.on_ninja_dmg = self._on_ninja_dmg
-        # Wire world callbacks for boss intro + firefly spawn FX.
-        self.world.on_boss_spawn = self._on_boss_spawn
-        self.world.on_firefly_spawn = self.firefly_fx.on_spawn
+        _e.set_event_bus(self.bus)
+        self.world.set_event_bus(self.bus)
+        # Deprecated aliases: keep the module globals for one release so
+        # any caller that still sets them directly keeps working. The
+        # bus is the primary path; these forward to it.
+        _e.on_enemy_dmg = lambda *a, **k: self.bus.emit("enemy_dmg", *a, **k)
+        _e.on_ninja_dmg = lambda *a, **k: self.bus.emit("ninja_dmg", *a, **k)
+        self.world.on_boss_spawn = lambda *a, **k: self.bus.emit("boss_spawn", *a, **k)
+        self.world.on_firefly_spawn = lambda *a, **k: self.bus.emit("firefly_spawn", *a, **k)
         # Notifications for the UI.
         self.notifications: list[tuple[str, float, tuple]] = []
         self.last_loot: dict = {}
@@ -251,7 +264,7 @@ class Runner:
         # Firefly spawn chance on kill.
         if rng().random() < 0.05:
             self.world.fireflies.append(_make_firefly_near(enemy.x, enemy.y))
-            self.firefly_fx.on_spawn(self.world.fireflies[-1])
+            self.bus.emit("firefly_spawn", self.world.fireflies[-1])
         self.world.on_enemy_killed(enemy)
         self.death_fx.spawn(enemy)
 

@@ -119,6 +119,28 @@ COMBO_TAU = 50.0      # combo count at which the multiplier is ~63% of cap
 
 
 # ---------------------------------------------------------------------------
+# Damage multiplier sanity cap
+# ---------------------------------------------------------------------------
+# Sanity cap on the total damage multiplier (the product of all stacking
+# sources). Without a cap, a bug or future content stack (gear + elements +
+# tokens + heritage + epic research) could silently produce 1e12x damage
+# and trivialize the game. This cap is the last line of defense.
+#
+# Stacking order (documented):
+#   total_dmg = base
+#              * tier_mult          (ascension tier stat_mult)
+#              * combo_mult          (asymptotic, <= COMBO_MULT_CAP)
+#              * evo                (skill tree + pets aggregate)
+#              * godai_element       (Godai Elements branch)
+#              * gear                (future: equipment set bonuses)
+#              * tokens              (future: buff tokens)
+#              * heritage            (future: heritage bonuses)
+#              * epic_research       (future: epic research tree)
+#   then clamped to MAX_TOTAL_DAMAGE_MULT.
+MAX_TOTAL_DAMAGE_MULT = 1e9
+
+
+# ---------------------------------------------------------------------------
 # Ascension
 # ---------------------------------------------------------------------------
 # Each ascension tier multiplies all stats and resets zone progress but

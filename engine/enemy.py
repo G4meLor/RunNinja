@@ -69,6 +69,26 @@ def nearest_enemy(enemies: list[Enemy]) -> Optional[Enemy]:
 
 
 # FX callbacks (set by the runner).
+# DEPRECATED: these module globals are kept as aliases that forward to the
+# Runner-owned EventBus for one release. New code should emit events via
+# the bus (``engine.eventbus``), not call these globals directly.
+_bus = None  # set by the runner via set_event_bus()
+
+
+def set_event_bus(bus) -> None:
+    """Wire the Runner-owned EventBus. Called once by the Runner."""
+    global _bus
+    _bus = bus
+
+
+def _emit(name: str, *args, **kwargs) -> None:
+    """Emit an event on the bus if wired; else fall back to the legacy global."""
+    if _bus is not None:
+        _bus.emit(name, *args, **kwargs)
+
+
+# Legacy module-global FX callbacks (deprecated; forward to the bus when
+# the runner wires them). New code should use ``_emit("enemy_dmg", ...)``.
 on_enemy_dmg = None   # (x, y, amount, *, is_crit, is_boss)
 on_ninja_dmg = None   # (x, y, amount)
 
@@ -77,11 +97,11 @@ def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False) -> None
     enemy.hp -= amount
     enemy.last_damage_timer = 0.6
     enemy.flash = 0.12
-    if on_enemy_dmg is not None:
-        try:
-            on_enemy_dmg(enemy.x, enemy.y, amount, is_crit=is_crit, is_boss=enemy.is_boss)
-        except Exception:
-            pass
+    # Emit via the bus (preferred). The deprecated ``on_enemy_dmg`` global
+    # is wired by the Runner to forward to the bus, so we do NOT also call
+    # it directly here — that would double-fire the event.
+    _emit("enemy_dmg", enemy.x, enemy.y, amount,
+          is_crit=is_crit, is_boss=enemy.is_boss)
     if enemy.hp <= 0:
         enemy.hp = 0
         enemy.alive = False
@@ -122,11 +142,11 @@ def tick_combat(ninja, enemies: list[Enemy], dt: float, *,
                 e.attack_timer -= 1.0
                 if ninja.alive:
                     dmg = ninja.take_damage(e.dmg)
-                    if on_ninja_dmg is not None:
-                        try:
-                            on_ninja_dmg(ninja.x, ninja.y, dmg)
-                        except Exception:
-                            pass
+                    # Emit via the bus (preferred). The deprecated
+                    # ``on_ninja_dmg`` global is wired by the Runner to
+                    # forward to the bus, so we do NOT also call it
+                    # directly here — that would double-fire the event.
+                    _emit("ninja_dmg", ninja.x, ninja.y, dmg)
         e.bob += dt
 
     # Ninja auto-attacks.

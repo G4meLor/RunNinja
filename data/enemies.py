@@ -113,10 +113,26 @@ BOSSES: dict[str, EnemyDef] = {
 }
 
 
+def zone_by_id(zone_id: str) -> dict:
+    """Look up a zone by its string id. Raises KeyError if unknown."""
+    for z in ZONES:
+        if z["id"] == zone_id:
+            return z
+    raise KeyError(f"unknown zone id: {zone_id}")
+
+
 def zone_by_index(i: int) -> dict:
+    """Look up a zone by its 0-based index.
+
+    Negative indices raise ValueError. Indices past the last zone clamp to
+    the last zone (the cnt-infinite-zones caller handles cycling); this
+    clamp is intentional and documented, not silent.
+    """
     if i < 0:
-        i = 0
+        raise ValueError(f"negative zone index: {i}")
     if i >= len(ZONES):
+        # Clamp to last: the caller (cnt-infinite-zones, a later task)
+        # handles cycling. This is the only allowed clamp.
         return ZONES[-1]
     return ZONES[i]
 
