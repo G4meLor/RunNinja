@@ -24,33 +24,43 @@ def test_elite_spawn_5pct(pygame_headless):
 
 
 def test_elite_stats_3x_hp_5x_gold(pygame_headless):
-    """An elite has 3x HP and 5x gold vs the same enemy's base stats."""
+    """An elite from ``_spawn_regular`` has 3x HP and 5x gold vs the base.
+
+    Exercises the actual ``_spawn_regular`` code path: spawns a batch,
+    filters the elites, and asserts each elite's hp/gold equal 3x/5x the
+    base stats for its edef (and ``rare_drop == 1.0``). A regression in
+    ``_spawn_regular`` that drops the ``* 3.0`` / ``* 5.0`` multipliers
+    would be caught here, not masked by a trivial ``spawn_enemy`` pass-
+    through.
+    """
     from engine.world import World
     w = World()
-    # Spawn a non-elite and an elite from the same zone pool entry so we
-    # can compare the multipliers directly. We force the roll by setting
-    # ``is_elite`` after spawn via the same code path the engine uses.
-    pool = w.zone["enemies"]
-    edef = pool[0]
-    base_hp = w.zone_hp(edef)
-    base_gold = w.zone_gold(edef)
-
-    # Manually exercise both branches of _spawn_regular's scaling.
-    from engine.enemy import spawn_enemy
-    regular = spawn_enemy(edef, hp=base_hp * 1.0,
-                          dmg=w.zone_dmg(edef), gold=base_gold * 1.0)
-    elite = spawn_enemy(edef, hp=base_hp * 3.0,
-                        dmg=w.zone_dmg(edef), gold=base_gold * 5.0)
-    elite.is_elite = True
-    elite.rare_drop = 1.0
-
-    assert regular.hp == base_hp
-    assert regular.gold == base_gold
-    assert elite.hp == base_hp * 3.0
-    assert elite.gold == base_gold * 5.0
-    assert elite.rare_drop == 1.0
-    assert elite.is_elite is True
-    assert regular.is_elite is False
+    # Spawn enough that at least one elite is virtually guaranteed
+    # (5% over 200 rolls -> ~10 elites on average).
+    for _ in range(200):
+        w._spawn_regular()
+    elites = [e for e in w.enemies if e.is_elite]
+    regulars = [e for e in w.enemies if not e.is_elite]
+    assert regulars, "no regular enemies spawned"
+    assert elites, "no elites spawned in 200 rolls (statistical fluke?)"
+    # Each elite: 3x base HP, 5x base gold, guaranteed rare_drop.
+    for e in elites:
+        base_hp = w.zone_hp(e.edef)
+        base_gold = w.zone_gold(e.edef)
+        assert e.hp == base_hp * 3.0, (
+            f"elite hp {e.hp} != 3x base {base_hp * 3.0}")
+        assert e.gold == base_gold * 5.0, (
+            f"elite gold {e.gold} != 5x base {base_gold * 5.0}")
+        assert e.rare_drop == 1.0, f"elite rare_drop {e.rare_drop} != 1.0"
+        assert e.is_elite is True
+    # A regular enemy: 1x base HP, 1x base gold, edef's rare_drop.
+    for e in regulars:
+        base_hp = w.zone_hp(e.edef)
+        base_gold = w.zone_gold(e.edef)
+        assert e.hp == base_hp, f"regular hp {e.hp} != base {base_hp}"
+        assert e.gold == base_gold, f"regular gold {e.gold} != base {base_gold}"
+        assert e.is_elite is False
+        assert e.rare_drop == e.edef.rare_drop
 
 
 def test_miniboss_field_on_enemy(pygame_headless):
@@ -111,25 +121,38 @@ def test_miniboss_releases_progress_on_kill(pygame_headless):
 
 
 def test_miniboss_stats_04x_boss(pygame_headless):
-    """The mini-boss has 0.4x the zone boss's HP/dmg/gold."""
+    """The mini-boss from ``_spawn_miniboss`` has 0.4x the zone boss stats.
+
+    Exercises the actual ``_spawn_miniboss`` code path (not a trivial
+    ``spawn_boss`` pass-through). A regression in ``_spawn_miniboss``
+    that drops the ``* 0.4`` multipliers or fails to set the
+    ``is_miniboss`` flag would be caught here.
+    """
     from engine.world import World
     from data import enemies as ed
-    from engine.enemy import spawn_boss
     w = World()
     bdef = ed.boss_for_zone(w.zone_id)
     boss_hp = w.zone_hp(bdef)
     boss_dmg = w.zone_dmg(bdef)
     boss_gold = w.zone_gold(bdef)
-    # The mini-boss is built with 0.4x the boss stats.
-    mb = spawn_boss(bdef, hp=boss_hp * 0.4, dmg=boss_dmg * 0.4,
-                    gold=boss_gold * 0.4)
-    mb.is_boss = False
-    mb.is_miniboss = True
-    assert mb.hp == boss_hp * 0.4
-    assert mb.dmg == boss_dmg * 0.4
-    assert mb.gold == boss_gold * 0.4
+    # Drive the actual code path: _spawn_miniboss appends a mini-boss to
+    # w.enemies and sets miniboss_active.
+    n_before = len(w.enemies)
+    w._spawn_miniboss()
+    assert w.miniboss_active is True
+    minibosses = [e for e in w.enemies if e.is_miniboss]
+    assert len(minibosses) == 1, (
+        f"expected 1 mini-boss, got {len(minibosses)}")
+    mb = minibosses[0]
+    assert mb.hp == boss_hp * 0.4, (
+        f"miniboss hp {mb.hp} != 0.4x boss {boss_hp * 0.4}")
+    assert mb.dmg == boss_dmg * 0.4, (
+        f"miniboss dmg {mb.dmg} != 0.4x boss {boss_dmg * 0.4}")
+    assert mb.gold == boss_gold * 0.4, (
+        f"miniboss gold {mb.gold} != 0.4x boss {boss_gold * 0.4}")
     assert mb.is_miniboss is True
-    assert mb.is_boss is False
+    assert mb.is_boss is False, (
+        "mini-boss must NOT be the zone boss (is_boss stays False)")
 
 
 def test_miniboss_not_spawned_after_boss(pygame_headless):
