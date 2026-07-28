@@ -84,8 +84,39 @@ class GameState:
 
     # ---- Meta ----
     playtime: float = 0.0
-    save_version: int = 2
+    save_version: int = 3
     last_saved: float = 0.0
+
+    # ---- v3 fields (big bang enhance) ----
+    # Seeded by the v2 -> v3 migration (see _migrate_v2_to_v3). Each later
+    # task adds its logic on top of these defaults; the migration ensures a
+    # v2 save loaded under v3+ code has every field the dataclass expects.
+    render_quality: str = "med"          # high, med, low (gfx-render-tier)
+    attuned_element: str = "none"        # none, void, wind, fire, water (gp-godai-fusion)
+    dojo: str = "none"                   # none, kage_bunshin, iaijutsu, shikigami, kusari_gama (gp-build-spec)
+    heritage: set[str] = field(default_factory=set)  # collected heritage dojos (gp-build-spec)
+    rhythm_streak: int = 0               # tap-rhythm bonus, cap 20 (gp-skill-synergy-rhythm)
+    combo_charges: int = 0              # banked combo-finisher charges (gp-combo-finishers)
+    tokens: dict[str, int] = field(default_factory=dict)  # strike/crit/coin/elixir -> count (gp-permanent-scaling)
+    gear: dict[str, dict] = field(default_factory=dict)   # slot -> {affix, value, rarity} (cnt-gear-loot)
+    souls: int = 0                      # reincarnation currency (gp-reincarnation)
+    soul_tree: set[str] = field(default_factory=set)     # permanent soul-tree perks (gp-reincarnation)
+    epic_research: set[str] = field(default_factory=set)  # permanent meta-tree nodes (gp-epic-research)
+    pet_stars: dict[str, int] = field(default_factory=dict)  # pid -> star level 1-12 (cnt-pet-depth)
+    spirit_embers: int = 0             # nested pet-prestige currency (cnt-pet-depth)
+    pity_tokens: int = 0               # gacha spark-shop currency (gp-gacha-fairness)
+    banner_pulls: int = 0              # pulls on the current banner (gp-gacha-fairness)
+    dungeon_active: bool = False       # is a shadow dungeon running (cnt-shadow-dungeon)
+    dungeon_type: str = "none"         # story, endless, daily (cnt-shadow-dungeon)
+    dungeon_floor: int = 0            # current dungeon floor (cnt-shadow-dungeon)
+    dungeon_seed: int = 0             # daily dungeon seed (cnt-shadow-dungeon)
+    music_on: bool = False            # separate from SFX (pl-music-sfx)
+    volume: float = 0.5              # master volume slider (pl-music-sfx)
+    text_scale: float = 1.0          # 0.8x-1.6x font scale (pl-accessibility)
+    dyslexia_font: bool = False      # dyslexia-friendly font toggle (pl-accessibility)
+    high_contrast: bool = False     # high-contrast palette toggle (pl-accessibility)
+    seen_hints: list[str] = field(default_factory=list)  # dismissed hint ids (pl-hints-nav-tooltips)
+    cosmic_forge: int = 0           # persistent reincarnation anchor, max 10 (gp-reincarnation-perks)
 
     # -----------------------------------------------------------------
     # Building helpers
@@ -129,18 +160,20 @@ class GameState:
     # -----------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        # Sets are stored as sorted lists on disk (stable JSON + diffable).
         d["skill_tree"] = sorted(self.skill_tree)
         d["achievements"] = sorted(self.achievements)
+        d["heritage"] = sorted(self.heritage)
+        d["soul_tree"] = sorted(self.soul_tree)
+        d["epic_research"] = sorted(self.epic_research)
         return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "GameState":
         s = cls()
         for k, v in d.items():
-            if k in ("skill_tree",):
-                s.skill_tree = set(v)
-            elif k in ("achievements",):
-                s.achievements = set(v)
+            if k in ("skill_tree", "achievements", "heritage", "soul_tree", "epic_research"):
+                setattr(s, k, set(v))
             elif hasattr(s, k):
                 setattr(s, k, v)
         return s
@@ -159,7 +192,9 @@ class GameState:
             return cls()
         try:
             with open(path, "r", encoding="utf-8") as f:
-                state = cls.from_dict(json.load(f))
+                d = json.load(f)
+            d = _migrate(d)
+            state = cls.from_dict(d)
             if state.last_saved <= 0:
                 state.last_saved = time.time()
             return state
@@ -170,3 +205,98 @@ class GameState:
             except OSError:
                 pass
             return cls()
+
+
+# ---------------------------------------------------------------------------
+# Save-version migration chain
+# ---------------------------------------------------------------------------
+# ``save_version`` was decorative: ``from_dict`` used ``hasattr+setattr``
+# with no migration logic, so the "forward-compatible additive schema" claim
+# was a time bomb (the first field rename or type change would silently
+# destroy player progress). The chain below walks from the file's
+# ``save_version`` up to ``CURRENT_SAVE_VERSION``, applying each migration
+# in order. Each migration is a PURE function (takes a dict, returns a new
+# dict) so the live save on disk is never mutated during migration: the
+# migrated dict is constructed in memory, ``from_dict`` builds the state,
+# and the next ``save()`` writes the new version atomically.
+
+CURRENT_SAVE_VERSION = 3
+
+
+def _migrate_v2_to_v3(d: dict) -> dict:
+    """v2 -> v3: seed new-field defaults for the big bang enhance.
+
+    Every field a later task adds to ``GameState`` is seeded here with the
+    same default the dataclass uses, so a v2 save loaded under v3+ code
+    has every field the dataclass expects (no KeyError, no AttributeError).
+    ``setdefault`` preserves any field already present (forward-compatible:
+    a v3 save re-loaded is a no-op for these fields).
+    """
+    d = dict(d)  # pure: don't mutate the input
+    # gfx-render-tier
+    d.setdefault("render_quality", "med")
+    # gp-godai-fusion
+    d.setdefault("attuned_element", "none")
+    # gp-build-spec
+    d.setdefault("dojo", "none")
+    d.setdefault("heritage", [])
+    # gp-skill-synergy-rhythm
+    d.setdefault("rhythm_streak", 0)
+    # gp-combo-finishers
+    d.setdefault("combo_charges", 0)
+    # gp-permanent-scaling
+    d.setdefault("tokens", {})
+    # cnt-gear-loot
+    d.setdefault("gear", {})
+    # gp-reincarnation
+    d.setdefault("souls", 0)
+    d.setdefault("soul_tree", [])
+    # gp-epic-research
+    d.setdefault("epic_research", [])
+    # cnt-pet-depth
+    d.setdefault("pet_stars", {})
+    d.setdefault("spirit_embers", 0)
+    # gp-gacha-fairness
+    d.setdefault("pity_tokens", 0)
+    d.setdefault("banner_pulls", 0)
+    # cnt-shadow-dungeon
+    d.setdefault("dungeon_active", False)
+    d.setdefault("dungeon_type", "none")
+    d.setdefault("dungeon_floor", 0)
+    d.setdefault("dungeon_seed", 0)
+    # pl-music-sfx
+    d.setdefault("music_on", False)
+    d.setdefault("volume", 0.5)
+    # pl-accessibility
+    d.setdefault("text_scale", 1.0)
+    d.setdefault("dyslexia_font", False)
+    d.setdefault("high_contrast", False)
+    # pl-hints-nav-tooltips
+    d.setdefault("seen_hints", [])
+    # gp-reincarnation-perks
+    d.setdefault("cosmic_forge", 0)
+    d["save_version"] = 3
+    return d
+
+
+MIGRATIONS = {
+    2: _migrate_v2_to_v3,
+}
+
+
+def _migrate(d: dict) -> dict:
+    """Walk the migration chain from the dict's ``save_version`` up to
+    ``CURRENT_SAVE_VERSION``.
+
+    Each migration is a pure function ``(d) -> d`` that bumps
+    ``save_version`` by one; the chain stops when the dict's version is no
+    longer in ``MIGRATIONS`` (i.e. it has reached ``CURRENT_SAVE_VERSION``).
+    A dict with no ``save_version`` is treated as v1 (the pre-versioning
+    era) and migrated from v2 onward; a dict already at or above
+    ``CURRENT_SAVE_VERSION`` is returned unchanged.
+    """
+    v = d.get("save_version", 1)
+    while v in MIGRATIONS:
+        d = MIGRATIONS[v](d)
+        v = d.get("save_version", v + 1)
+    return d

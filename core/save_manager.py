@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from core.state import GameState, SAVE_FILE
+from core.state import GameState, SAVE_FILE, _migrate
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +89,36 @@ _SCHEMA: dict[str, type] = {
     # Settings
     "sound_on": bool,
     "reduced_motion": bool,
+    # v3 settings (big bang enhance) — type-checked only if present; the
+    # v2 -> v3 migration seeds them, but an imported file may pre-date the
+    # migration and omit them. Forward-compatible: missing fields are not
+    # errors (only the _REQUIRED set is hard-required).
+    "render_quality": str,
+    "music_on": bool,
+    "volume": float,
+    "text_scale": float,
+    "dyslexia_font": bool,
+    "high_contrast": bool,
+    "seen_hints": list,
+    "attuned_element": str,
+    "dojo": str,
+    "heritage": list,
+    "rhythm_streak": int,
+    "combo_charges": int,
+    "tokens": dict,
+    "gear": dict,
+    "souls": int,
+    "soul_tree": list,
+    "epic_research": list,
+    "pet_stars": dict,
+    "spirit_embers": int,
+    "pity_tokens": int,
+    "banner_pulls": int,
+    "dungeon_active": bool,
+    "dungeon_type": str,
+    "dungeon_floor": int,
+    "dungeon_seed": int,
+    "cosmic_forge": int,
     # Meta
     "playtime": float,
     "save_version": int,
@@ -291,6 +321,9 @@ def import_save(path: str) -> GameState:
     """
     with open(path, "r", encoding="utf-8") as f:
         d = json.load(f)
+    # Migrate the dict before validation + from_dict so an imported v2 save
+    # is upgraded to v3 in the same way ``GameState.load`` does it.
+    d = _migrate(d)
     res = validate_save(d)
     if not res.valid:
         raise ValueError(
