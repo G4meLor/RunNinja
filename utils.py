@@ -116,20 +116,49 @@ def smoothstep(edge0: float, edge1: float, x: float) -> float:
 
 
 def format_number(n: float) -> str:
-    """Compact integer formatting: 1.5k, 2.3M, 4.7B, ... up to absurd scale."""
+    """Compact integer formatting: 1.23k, 1.50M, 1.5B, ... up to absurd scale.
+
+    Precision is tiered:
+    - <1e9 (k, M): 2 decimals, e.g. ``1.23k``, ``1.50M``.
+    - >=1e9 (B and above): 2 significant figures, e.g. ``1.5B``, ``12B``;
+      values >=100 in-unit stay plain (``150B``, ``500Dc``).
+    - Beyond the unit table (>=1e36): scientific notation of the original
+      value, e.g. ``1.00e+36``.  This is the overflow fix — previously it
+      returned ``1000Dc``.
+    """
     if n is None:
         return "0"
     n = float(n)
-    if abs(n) < 1000:
-        return f"{int(round(n))}"
+    if n < 0:
+        return "-" + format_number(-n)
+    if n < 1000:
+        # Integers stay plain; a non-integer below 1000 rounds to 2 decimals.
+        return f"{int(n)}" if n == int(n) else f"{n:.2f}"
+
+    # The existing unit table — kept verbatim so in-range output stays the
+    # same shape callers already lay out around (HUD pills, breakdowns, ...).
     units = ["", "k", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"]
+    original = n
     u = 0
-    while abs(n) >= 1000 and u < len(units) - 1:
+    while n >= 1000 and u < len(units) - 1:
         n /= 1000.0
         u += 1
-    if abs(n) >= 100:
+
+    # Overflow: the table is exhausted but the value is still >=1000 in the
+    # last unit. Roll to scientific notation of the *original* value rather
+    # than the old "1000Dc".
+    if n >= 1000:
+        return f"{original:.2e}"
+
+    # Tiered precision.
+    #   u<=2 (k, M): <1e9 in original units -> 2 decimals.
+    #   u>=3 (B, T, ...): >=1e9 in original units -> 2 sig figs, but keep
+    #   plain integers for n>=100 so "150B" / "500Dc" don't go scientific.
+    if u <= 2:
+        return f"{n:.2f}{units[u]}"
+    if n >= 100:
         return f"{n:.0f}{units[u]}"
-    return f"{n:.1f}{units[u]}"
+    return f"{n:.2g}{units[u]}"
 
 
 def lerp_color(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
