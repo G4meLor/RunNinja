@@ -125,22 +125,11 @@ on_ninja_dmg = None   # (x, y, amount)
 # ---------------------------------------------------------------------------
 # Boss soft-phase scaling (Task 13)
 # ---------------------------------------------------------------------------
-# Attack pattern labels per phase (soft-phase scaling, no new state machine).
-# Phase 0: melee (base). Phase 1: +projectile. Phase 2: +hazard.
-# Phase 3: +summon + shield. These scale the boss's attack_timer (faster
-# attacks as HP drops), not a new attack-type state machine.
-BOSS_PHASE_PATTERNS: dict[int, str] = {
-    0: "melee",
-    1: "projectile",
-    2: "hazard",
-    3: "summon_shield",
-}
-
-# Shield size at phase 3: a fraction of the boss's max HP. The shield is a
-# flat HP buffer that sustained auto-attack DPS breaks through; it does NOT
-# regenerate, so once it's depleted the boss takes full damage.
-BOSS_SHIELD_FRACTION = 0.3
-
+# The attack-pattern library + shield tuning live in ``data/enemies.py``
+# (``ed.BOSS_PHASE_PATTERNS``, ``ed.BOSS_SHIELD_FRACTION``) so they are the
+# single source of truth for re-tuning (see gap #4: re-test the shield
+# after Task 24 / gp-tap-auto-rebalance lands). This module references them
+# via the ``ed`` alias (``from data import enemies as ed`` above).
 
 def _boss_phase_from_hp(boss: Enemy) -> int:
     """Derive the boss phase from HP thresholds (no state machine).
@@ -176,12 +165,12 @@ def _update_boss_phase(boss: Enemy) -> int:
     if new_phase != old_phase:
         boss.phase = new_phase
         boss.attack_interval = 1.0 / (1.0 + 0.3 * new_phase)
-        boss.attack_pattern = BOSS_PHASE_PATTERNS.get(new_phase, "melee")
+        boss.attack_pattern = ed.BOSS_PHASE_PATTERNS.get(new_phase, "melee")
         # Arm the shield at phase 3 (breakable by sustained auto-attack DPS).
         # The shield does NOT regenerate, so sustained DPS depletes it and
         # the boss takes full damage once the shield is gone.
         if new_phase == 3 and boss.shield <= 0:
-            boss.shield_max = boss.max_hp * BOSS_SHIELD_FRACTION
+            boss.shield_max = boss.max_hp * ed.BOSS_SHIELD_FRACTION
             boss.shield = boss.shield_max
         # Emit the phase transition event so the runner can fire the
         # nameplate flash + banner + hue shift (no pause).
@@ -204,9 +193,13 @@ def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False) -> None
     enemy.flash = 0.12
     # Emit via the bus (preferred). The deprecated ``on_enemy_dmg`` global
     # is wired by the Runner to forward to the bus, so we do NOT also call
-    # it directly here — that would double-fire the event.
-    _emit("enemy_dmg", enemy.x, enemy.y, amount,
-          is_crit=is_crit, is_boss=enemy.is_boss)
+    # it directly here — that would double-fire the event. Skip the emit
+    # when the shield absorbed the entire hit (amount == 0) so the damage
+    # FX does not render a "0" -- the boss still flashes via ``flash`` and
+    # ``last_damage_timer`` above, so the hit is visible without a number.
+    if amount > 0:
+        _emit("enemy_dmg", enemy.x, enemy.y, amount,
+              is_crit=is_crit, is_boss=enemy.is_boss)
     if enemy.hp <= 0:
         enemy.hp = 0
         enemy.alive = False
