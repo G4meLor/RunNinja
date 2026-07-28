@@ -56,6 +56,13 @@ class Enemy:
     attack_pattern: str = "melee"
     shield: float = 0.0
     shield_max: float = 0.0
+    # Yokai Portal boss variant (Task 16): a 5% chance for a boss to be a
+    # Yokai Portal variant that, when killed, jumps ``zone_distance`` by a
+    # chunk (the "zooming through zones" skip). The boss is still killed
+    # normally (is_boss=True) so the normal boss-kill path fires (zone
+    # advance, bosses_killed++, bestiary/achievement reveals) — only the
+    # zone bar ALSO jumps. Transient — no state is kept on GameState.
+    is_yokai_portal: bool = False
 
 
 def spawn_enemy(edef, *, hp: float, dmg: float, gold: float) -> Enemy:

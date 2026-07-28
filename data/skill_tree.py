@@ -84,6 +84,14 @@ _EXTRA_NODES = [
      "crit_dmg_pct", 0.10, "+10% crit damage."),
     ("off_atk1", "Auto Blade", "offense", 25, "off_root",
      "atk_pct", 0.10, "+10% auto-attack damage."),
+    # Cleave (Task 16): overkill-clears the next K enemies when a tap
+    # massively overkills. Gated behind mid-ascension (``ascend_tier >= 3``)
+    # in ``Runner.cleave_count()`` so a new player never sees splash in
+    # the first runs. The node contributes a flat ``cleave`` count (the
+    # number of enemies to chain-clear on a massive overkill); the runner
+    # multiplies it by the tier gate. Cost scales with the offense chain.
+    ("off_cleave1", "Cleave", "offense", 80, "off_atk1",
+     "cleave", 1.0, "+1 enemy chain-cleared on massive overkill (tier 3+)."),
     # Economy extras (building output, away income)
     ("eco_gps1", "Builder's Hand", "economy", 20, "eco_root",
      "gps_pct", 0.10, "+10% building gold/sec."),

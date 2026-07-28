@@ -12,6 +12,17 @@ from engine.enemy import Enemy, spawn_enemy, spawn_boss, spawn_miniboss
 from utils import rng
 
 
+# Yokai Portal boss variant (Task 16): a 5% chance for a boss to be a
+# Yokai Portal that, when killed, jumps ``zone_distance`` by a chunk
+# (50% of ZONE_DISTANCE) so the next zone starts partway in. The boss is
+# still killed normally so bestiary/achievement reveals fire — only the
+# zone bar jumps. The jump is 50% (not 100%) so the skip never skips a
+# whole zone — it only shortcuts the next zone's first half (the player
+# still has to walk + fight the mini-boss + the zone boss).
+YOKAI_PORTAL_CHANCE = 0.05
+YOKAI_PORTAL_JUMP = 0.5
+
+
 class World:
     def __init__(self) -> None:
         self.zone_index = 0
@@ -152,6 +163,14 @@ class World:
         bdef = ed.boss_for_zone(self.zone_id)
         boss = spawn_boss(bdef, hp=self.zone_hp(bdef), dmg=self.zone_dmg(bdef),
                           gold=self.zone_gold(bdef))
+        # Yokai Portal boss variant (Task 16): a 5% chance for a boss to
+        # be a Yokai Portal that, when killed, jumps ``zone_distance`` by
+        # a chunk (50% of ZONE_DISTANCE). The boss is still killed
+        # normally (is_boss=True) so the normal boss-kill path fires
+        # (zone advance, bosses_killed++, bestiary/achievement reveals) —
+        # only the zone bar ALSO jumps. Transient — no state on GameState.
+        if rng().random() < YOKAI_PORTAL_CHANCE:
+            boss.is_yokai_portal = True
         self.enemies.append(boss)
         # Boss intro FX: emit via the bus (preferred). The deprecated
         # ``on_boss_spawn`` global is wired by the Runner to forward to
@@ -206,9 +225,25 @@ class World:
         if enemy.is_boss:
             self.boss_active = False
             self.zone_index += 1
-            self.zone_distance = 0.0
+            # Yokai Portal skip (Task 16): a Yokai Portal boss jump the
+            # zone bar by a chunk (50% of ZONE_DISTANCE) so the next zone
+            # starts partway in. The boss is still killed normally (the
+            # zone advance above + the runner's boss-kill path), so
+            # bestiary/achievement reveals fire — only the zone bar jumps.
+            # A normal boss resets zone_distance to 0 (the existing path).
+            if getattr(enemy, "is_yokai_portal", False):
+                self.zone_distance = cfg.ZONE_DISTANCE * YOKAI_PORTAL_JUMP
+            else:
+                self.zone_distance = 0.0
             # Reset the per-zone mini-boss flag so the next zone can spawn
-            # its own mini-boss at 50% distance.
+            # its own mini-boss at 50% distance. NOTE: when a Yokai Portal
+            # jumps zone_distance to 50%, the mini-boss would normally
+            # spawn immediately on the next tick — but ``miniboss_done``
+            # is reset here so the mini-boss CAN spawn (the player still
+            # has to kill it to advance to the zone boss). The 50% jump
+            # is intentionally below the 100% threshold so the Yokai
+            # Portal skip never skips a whole zone — it only shortcuts
+            # the next zone's first half.
             self.miniboss_done = False
         if enemy.is_miniboss:
             # Release the progress block so the player can advance to the

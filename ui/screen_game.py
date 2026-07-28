@@ -209,6 +209,14 @@ class GameScreen:
                          bg=C.hp_bg, border=C.panel_border)
             if (e.is_boss or e.is_miniboss) and e.alive:
                 draw_text_center(surf, e.name, (ex, ey - 28), font_sm(bold=True), C.text_warn)
+                # Yokai Portal boss variant (Task 16): a rare boss variant
+                # that jumps the zone bar when killed. The variant gets a
+                # "YOKAI PORTAL" tag above the boss name so the player can
+                # see the skip is coming (the brief calls for "a brief"
+                # visual cue; the boss-FX intro already fires for the boss).
+                if getattr(e, "is_yokai_portal", False):
+                    draw_text_center(surf, "YOKAI PORTAL", (ex, ey - 44),
+                                     font_xs(bold=True), C.soul)
             if e.is_elite and e.alive:
                 draw_text_center(surf, "ELITE", (ex, ey - 44), font_xs(bold=True), C.text_warn)
 
