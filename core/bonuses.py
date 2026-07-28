@@ -253,6 +253,42 @@ def _epic_research_provider(state: GameState) -> dict[str, float]:
     return out
 
 
+# Gear (cnt-gear-loot) -- 4 equipment slots with passive affixes. Each
+# slot holds at most one gear piece (``state.gear[slot] = {affix, value,
+# rarity}``); the provider emits the affix effects into the flat bonus
+# dict using the same effect keys the engine already reads (``tap_pct``,
+# ``atk_pct``, ``crit_pct``, ``crit_dmg_pct``, ``gold_pct``, ``speed_pct``,
+# ``hp_pct``, ``def_pct``, ``energy_regen``, ``drop_pct``), so the gear
+# contributions stack additively with the skill tree + pets + tokens +
+# heritage contributions to the same keys. The gear provider is the
+# MODEL half of the gear split (Task 20); the Forge UI (enhance/reroll/
+# salvage) is Task 33.
+#
+# The stacking order is documented in ``config.MAX_TOTAL_DAMAGE_MULT``:
+# gear is one of the additive sources in the ``evo`` layer; the total
+# damage multiplier is clamped to ``MAX_TOTAL_DAMAGE_MULT`` (the sanity
+# cap). The gear values are tuned (see ``config.GEAR_RARITY_MULT``) so
+# even a full set of mythic pieces stays well under the cap.
+def _gear_provider(state: GameState) -> dict[str, float]:
+    """Gear pieces: each slot's affix contributes its value to the key.
+
+    ``state.gear`` maps slot -> ``{affix, value, rarity}``. Each piece's
+    ``affix`` is the effect key (the same keys the engine reads in
+    ``aggregate_bonuses``), and ``value`` is the rarity-scaled
+    contribution. Two slots with the same affix sum additively (the
+    provider emits a single dict; ``aggregate_bonuses`` merges it
+    additively by key).
+    """
+    out: dict[str, float] = {}
+    for slot, g in state.gear.items():
+        affix = g.get("affix")
+        value = g.get("value", 0.0)
+        if affix is None or value <= 0:
+            continue
+        out[affix] = out.get(affix, 0.0) + value
+    return out
+
+
 # Register the built-in providers. Order does not matter — contributions
 # are summed additively by key.
 register_provider(_skill_tree_provider)
@@ -263,6 +299,7 @@ register_provider(_heritage_provider)
 register_provider(_tokens_provider)
 register_provider(_heritage_achievements_provider)
 register_provider(_epic_research_provider)
+register_provider(_gear_provider)
 
 
 def aggregate_bonuses(state: GameState) -> dict[str, float]:

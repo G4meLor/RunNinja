@@ -414,6 +414,15 @@ class Runner:
             # cap ensures the +1%-per-token complements rather than
             # replaces the exponential zone scaling.
             award_boss_token(self.state, self.state.bosses_killed - 1)
+            # Gear drop (cnt-gear-loot): a boss kill drops a gear piece
+            # (random slot, rarity from GACHA_RATES, random affix from
+            # the slot's pool). The new piece replaces any existing piece
+            # in the slot (one piece per slot). The drop is automatic --
+            # no active requirement -- so gear progression is a passive
+            # consequence of boss kills (the player just kills bosses and
+            # the gear set fills in over time). The Forge UI (enhance /
+            # reroll / salvage) is Task 33.
+            self._drop_gear()
             self.notify(f"Boss slain: {enemy.name}!", (255, 220, 120))
             self.boss_fx.stop()
         if enemy.is_miniboss:
@@ -437,6 +446,45 @@ class Runner:
         self.state.gold += amount
         self.state.lifetime_gold += amount
         self.state.gold_earned_today += amount
+
+    # -----------------------------------------------------------------
+    # Gear drops (cnt-gear-loot)
+    # -----------------------------------------------------------------
+    def _drop_gear(self) -> None:
+        """Drop a gear piece on a boss kill (automatic, no active requirement).
+
+        Picks a random slot from ``cfg.GEAR_SLOTS``, a rarity from
+        ``cfg.GACHA_RATES`` (the same table the pet gacha uses), and a
+        random affix from the slot's pool (``cfg.GEAR_AFFIXES[slot]``).
+        The affix value is the base value scaled by the rarity multiplier
+        (``cfg.GEAR_RARITY_MULT[rarity]``). The new piece replaces any
+        existing piece in the slot (one piece per slot, 4 slots max).
+
+        The drop is the MODEL half of the gear split (Task 20): the
+        state.gear dict is the source of truth; the Forge UI (enhance /
+        reroll / salvage) is Task 33. The gear provider in
+        ``core.bonuses`` reads ``state.gear`` and emits the affix effects
+        into the flat bonus dict via ``aggregate_bonuses``, so the gear
+        contributions stack additively with the skill tree + pets +
+        tokens + heritage contributions to the same effect keys.
+        """
+        slot = rng().choice(cfg.GEAR_SLOTS)
+        # Roll a rarity from GACHA_RATES (reuse the gacha distribution).
+        rarities = tuple(cfg.GACHA_RATES.keys())
+        weights = [cfg.GACHA_RATES[r] for r in rarities]
+        rarity = rng().choices(rarities, weights=weights, k=1)[0]
+        # Pick a random affix from the slot's pool.
+        pool = cfg.GEAR_AFFIXES.get(slot)
+        if not pool:
+            return
+        affix_key, base_val = rng().choice(pool)
+        value = base_val * cfg.GEAR_RARITY_MULT.get(rarity, 1.0)
+        # Replace any existing piece in the slot (one piece per slot).
+        self.state.gear[slot] = {
+            "affix": affix_key,
+            "value": value,
+            "rarity": rarity,
+        }
 
     # -----------------------------------------------------------------
     # Player actions

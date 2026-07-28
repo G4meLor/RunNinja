@@ -111,6 +111,78 @@ EARLY_PITY_WINDOW = 10
 
 
 # ---------------------------------------------------------------------------
+# Gear (cnt-gear-loot)
+# ---------------------------------------------------------------------------
+# 4 gear slots, each with a passive affix pool. A dropped gear piece has one
+# affix (random from the slot's pool) scaled by the rarity multiplier. The
+# rarity distribution reuses ``GACHA_RATES`` (the same table the pet gacha
+# uses) so the drop economy is consistent: a common drop is ~60% of kills,
+# a mythic is ~0.5%. The gear provider in ``core/bonuses.py`` reads
+# ``state.gear`` and emits the affix effects into the flat bonus dict, so
+# gear stacks additively with the skill tree + pets + tokens + heritage
+# contributions (same effect keys, additive by key).
+#
+# The stacking order is documented in ``MAX_TOTAL_DAMAGE_MULT`` above:
+# gear is one of the additive sources in the ``evo`` layer; the total
+# damage multiplier is clamped to ``MAX_TOTAL_DAMAGE_MULT`` (the sanity
+# cap). Gear values are tuned so even a full set of mythic pieces stays
+# well under the cap (a single mythic piece is at most +200% on a pct
+# key, additive with the other sources, not multiplicative).
+GEAR_SLOTS = ("blade", "mask", "talisman", "cloak")
+
+# Affix pool per slot: ``(effect_key, base_value)``. The base value is the
+# COMMON-rarity value; the actual dropped value is ``base * GEAR_RARITY_MULT[rarity]``.
+# The effect keys are the same keys the engine already reads in
+# ``aggregate_bonuses`` (``tap_pct``, ``atk_pct``, ``crit_pct``,
+# ``crit_dmg_pct``, ``gold_pct``, ``speed_pct``, ``hp_pct``, ``def_pct``,
+# ...), so gear stacks additively with the skill tree + pets + tokens +
+# heritage contributions to the same keys.
+#
+# The 4 slots are themed by the 4 broad playstyles:
+#   * **blade**  -- offense (tap + crit + crit dmg)
+#   * **mask**   -- auto-attack + attack speed (the idle path)
+#   * **talisman** -- economy (gold + drop + crit chance)
+#   * **cloak**  -- defense + utility (hp + defense + energy)
+GEAR_AFFIXES: dict[str, tuple[tuple[str, float], ...]] = {
+    "blade": (
+        ("tap_pct", 0.05),        # +5% tap damage (common)
+        ("crit_dmg_pct", 0.10),   # +10% crit damage (common)
+        ("crit_pct", 0.02),       # +2% crit chance (common)
+    ),
+    "mask": (
+        ("atk_pct", 0.05),        # +5% auto-attack damage (common)
+        ("speed_pct", 0.05),      # +5% attack speed (common)
+        ("tap_pct", 0.03),        # +3% tap damage (common, hybrid)
+    ),
+    "talisman": (
+        ("gold_pct", 0.08),       # +8% gold from enemies (common)
+        ("crit_pct", 0.02),       # +2% crit chance (common)
+        ("drop_pct", 0.05),       # +5% rare drop chance (common)
+    ),
+    "cloak": (
+        ("hp_pct", 0.05),         # +5% max HP (common)
+        ("def_pct", 0.05),        # +5% defense (common)
+        ("energy_regen", 0.05),   # +5% energy regen (common, utility)
+    ),
+}
+
+# Rarity multiplier on the base affix value. Reuses the GACHA_RATES rarity
+# ladder (common/rare/epic/legendary/mythic): a common drop is the base
+# value, a mythic drop is 8x the base. The multipliers are tuned so a
+# single mythic piece is a significant but not game-breaking additive
+# contribution (e.g. a mythic blade's tap_pct is 0.05 * 8 = +40%, which
+# stacks additively with the skill tree + pets + tokens + heritage
+# contributions to tap_pct, all under the MAX_TOTAL_DAMAGE_MULT cap).
+GEAR_RARITY_MULT = {
+    "common": 1.0,
+    "rare": 2.0,
+    "epic": 4.0,
+    "legendary": 6.0,
+    "mythic": 8.0,
+}
+
+
+# ---------------------------------------------------------------------------
 # Upgrade economy
 # ---------------------------------------------------------------------------
 # Run upgrades (Tap Ninja — temporary, bought with gold, reset on ascension)
