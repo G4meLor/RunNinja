@@ -54,6 +54,16 @@ ZONE_DMG_GROWTH = 1.14
 ZONE_GOLD_BASE = 6.0
 ZONE_GOLD_GROWTH = 1.16
 
+# Infinite zone cycling: past zone 9 the 9 themed zones repeat at scaled
+# stats. ``cycle = floor(zone_index / 9)``; the in-cycle zone
+# (``zone_index % 9``) drives the base growth, and the cycle multiplier
+# drives the long-run scaling so the endgame never stalls. The road
+# continues forever with the same 9 themed zones + bosses; only the
+# scaler changes (no new state field -- cycle is derived).
+CYCLE_HP_MULT = 8.0
+CYCLE_DMG_MULT = 7.0
+CYCLE_GOLD_MULT = 9.0
+
 # How often a monster spawns (seconds) at base.
 SPAWN_INTERVAL = 1.1
 SPAWN_INTERVAL_MIN = 0.45      # floor so the road never goes empty
@@ -145,19 +155,28 @@ MAX_TOTAL_DAMAGE_MULT = 1e9
 # ---------------------------------------------------------------------------
 # Each ascension tier multiplies all stats and resets zone progress but
 # preserves characters & gacha progress.  Higher tiers cost souls.
+#
+# The 7 tier NAMES remain as labels for the ascend UI (the ladder shows the
+# progression: Mortal -> Awakened -> ... -> Singularity). The flat
+# ``stat_mult`` column they used to carry is DEPRECATED -- the live
+# multiplier is ``1.6 ** tier`` (see ``engine.ninja._ascend_tier_mult`` and
+# ``core.game_economy._tier_mult``). The column is kept here (set to 0.0)
+# so any code that still indexes it does not crash; the UI reads the live
+# value from the formula. The ``soul_cost`` and ``soul_reward_on_ascend``
+# columns are still authoritative.
 ASCEND_TIERS = (
-    # (tier_name, stat_mult, soul_cost, soul_reward_on_ascend, flavor)
-    ("Mortal", 1.00, 0, 10, "The beginning of every hero."),
-    ("Awakened", 1.25, 50, 40, "A spark of power ignites within."),
-    ("Transcendent", 1.60, 250, 120, "Limits begin to dissolve."),
-    ("Divine", 2.10, 1200, 350, "Walking the road of gods."),
-    ("Eternal", 3.00, 6000, 1000, "Time itself bends to your will."),
-    ("Cosmic", 4.50, 30000, 3000, "The road stretches across galaxies."),
-    ("Singularity", 7.00, 150000, 12000, "All roads converge into one."),
+    # (tier_name, stat_mult_deprecated, soul_cost, soul_reward_on_ascend, flavor)
+    ("Mortal", 0.0, 0, 10, "The beginning of every hero."),
+    ("Awakened", 0.0, 50, 40, "A spark of power ignites within."),
+    ("Transcendent", 0.0, 250, 120, "Limits begin to dissolve."),
+    ("Divine", 0.0, 1200, 350, "Walking the road of gods."),
+    ("Eternal", 0.0, 6000, 1000, "Time itself bends to your will."),
+    ("Cosmic", 0.0, 30000, 3000, "The road stretches across galaxies."),
+    ("Singularity", 0.0, 150000, 12000, "All roads converge into one."),
 )
 
 # Elixir awarded on ascension.  Re-tuned for the persist-through-ascension
-# economy: buildings now carry over (scaled by the tier stat_mult in
+# economy: buildings now carry over (scaled by the tier multiplier in
 # total_gps), so lifetime_gold grows faster on subsequent runs.  The
 # diminish factor scales elixir-per-gold down on higher tiers so the
 # post-ascension economy doesn't snowball.
@@ -167,6 +186,12 @@ ASCEND_TIERS = (
 # ELIXIR_RATE is tuned so a first ascension at ~10k lifetime gold gives
 # ~50 elixir (matching the Awakened soul_reward tier).  ELIXIR_DIMINISH
 # is 0.10 so the factor stays positive through all 7 tiers (tier 6 -> 0.40).
+# Note: the tier multiplier is now ``1.6 ** tier`` (steeper than the old
+# flat ladder at high tiers); the diminish factor is a flat per-tier
+# scalar that does NOT track tier_mult, so the elixir economy is
+# unaffected by the tier-formula change. The building-unlock regression
+# test (tests/test_building_unlock.py) guards the first-3-ascensions
+# balance.
 ELIXIR_RATE = 0.005
 ELIXIR_DIMINISH = 0.10
 

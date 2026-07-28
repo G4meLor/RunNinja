@@ -154,7 +154,11 @@ class GameScreen:
         ox, oy = self.game.shake_offset()
 
         from assets import background
-        bg = background(world.zone_index, world.zone["hue"])
+        # The background keys on (zone_index, hue); past zone 9 the 9
+        # themed zones repeat, so the in-cycle zone index (0..8) keeps
+        # the cache keyed by the visible zone while the cycle scales
+        # stats. This avoids unbounded background cache growth.
+        bg = background(world.zone_in_cycle, world.zone["hue"])
         surf.blit(bg, (ox, oy))
 
         ly = cfg.ROAD_TOP + cfg.ROAD_H // 2 - 2
@@ -334,8 +338,18 @@ class GameScreen:
         x += currency_pill(surf, x, y, "Elixir", format_number(state.elixir), (120, 220, 200)) + 10
         x += currency_pill(surf, x, y, "Amber", format_number(state.amber), (255, 180, 60)) + 10
         currency_pill(surf, x, y, "Medals", format_number(state.medals), (200, 200, 220))
-        # Zone.
-        draw_text_center(surf, f"{world.zone_name}  —  Zone {world.zone_index + 1}",
+        # Zone + cycle. Past zone 9 the 9 themed zones repeat at scaled
+        # stats; the cycle (``zone_index // 9``) is the post-endgame
+        # progression, so the HUD always surfaces it. The in-cycle zone
+        # (``zone_index % 9``) is the zone the player sees (1-9).
+        in_cycle = world.zone_in_cycle
+        cycle = world.cycle
+        if cycle > 0:
+            zone_label = (f"{world.zone_name}  —  Zone {in_cycle + 1}"
+                          f"  (Cycle {cycle + 1})")
+        else:
+            zone_label = f"{world.zone_name}  —  Zone {in_cycle + 1}"
+        draw_text_center(surf, zone_label,
                          (cfg.WINDOW_W // 2, 18), font_md(bold=True), C.text)
         zb = pygame.Rect(cfg.WINDOW_W // 2 - 140, 38, 280, 10)
         draw_bar(surf, zb, world.zone_progress(), fill=C.exp, bg=C.mp_bg, border=C.panel_border)

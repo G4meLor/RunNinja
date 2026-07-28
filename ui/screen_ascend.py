@@ -72,7 +72,7 @@ class AscendScreen:
         draw_panel(surf, r, fill=(40, 24, 60), border=(150, 80, 220), border_w=2)
         draw_text_center(surf, "Current Run", (r.centerx, r.y + 14), font_xs(), C.text_dim)
         tier_name = cfg.ASCEND_TIERS[min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)][0]
-        tier_mult = cfg.ASCEND_TIERS[min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)][1]
+        tier_mult = 1.6 ** state.ascend_tier
         draw_text(surf, f"Tier: {tier_name} (x{tier_mult:.2f} stats)", (r.x + 20, r.y + 36), font_md(bold=True), (150, 80, 220))
         draw_text(surf, f"Lifetime gold: {format_number(state.lifetime_gold)}", (r.x + 20, r.y + 60), font_md(), C.text)
         draw_text(surf, f"Zone: {state.zone_index + 1}  ·  Combo: {state.combo}", (r.x + 20, r.y + 82), font_sm(), C.text_dim)

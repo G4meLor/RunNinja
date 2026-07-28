@@ -169,17 +169,24 @@ class RecordsCharts:
         draw_panel(surf, rect, fill=C.panel, border=C.panel_border)
         state = self.game.state
         total_zones = len(ed.ZONES)
-        zone_idx = max(0, min(state.zone_index, total_zones - 1))
+        # Infinite zone cycling: the in-cycle zone (0..8) is the visible
+        # zone; the cycle (zone_index // 9) is the post-endgame tier.
+        in_cycle = state.zone_index % total_zones
+        cycle = state.zone_index // total_zones
         within = state.zone_distance / cfg.ZONE_DISTANCE
         within = 0.0 if within < 0 else 1.0 if within > 1 else within
-        pct = (zone_idx + within) / total_zones
-        zone = ed.zone_by_index(zone_idx)
+        pct = (in_cycle + within) / total_zones
+        zone = ed.zone_by_index(in_cycle)
 
         draw_text(surf, "Zone progress", (rect.x + 12, rect.y + 8),
                   font_xs(), C.text_dim)
         draw_text(surf, f"{int(pct * 100)}%",
                   (rect.right - 12, rect.y + 7), font_sm(bold=True), C.exp)
-        draw_text(surf, f"{zone_idx + 1}/{total_zones}  ·  {zone['name']}",
+        if cycle > 0:
+            label = f"{in_cycle + 1}/{total_zones}  ·  {zone['name']}  (Cycle {cycle + 1})"
+        else:
+            label = f"{in_cycle + 1}/{total_zones}  ·  {zone['name']}"
+        draw_text(surf, label,
                   (rect.x + 12, rect.y + 26), font_sm(bold=True), C.text)
         bar = pygame.Rect(rect.x + 12, rect.bottom - 20, rect.w - 24, 12)
         draw_bar(surf, bar, pct, fill=C.exp, bg=C.mp_bg, border=C.panel_border)

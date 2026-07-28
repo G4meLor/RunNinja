@@ -150,17 +150,16 @@ def test_elixir_pct_skill_still_applies(pygame_headless):
 # total_gps scaled by tier stat_mult
 # ---------------------------------------------------------------------------
 def test_total_gps_scaled_by_tier(pygame_headless):
-    """Building output in total_gps is scaled by the ascension tier stat_mult."""
+    """Building output in total_gps is scaled by the ascension tier multiplier."""
     from core.state import GameState
     from core.game_economy import total_gps
-    import config as cfg
     state = GameState()
     state.buildings = {"farm": 10, "sawmill": 5}
-    # Tier 0: stat_mult = 1.0
+    # Tier 0: tier_mult = 1.6^0 = 1.0
     gps_t0 = total_gps(state)
     state.ascend_tier = 1
     gps_t1 = total_gps(state)
-    expected_mult = cfg.ASCEND_TIERS[1][1]  # 1.25
+    expected_mult = 1.6 ** 1  # 1.6 -- the live tier formula
     assert gps_t1 == pytest.approx(gps_t0 * expected_mult, rel=1e-6), \
         f"tier scaling: {gps_t0} -> {gps_t1}, expected x{expected_mult}"
 
@@ -182,7 +181,7 @@ def test_total_gps_tier_zero_no_scaling(pygame_headless):
 # Per-building UI display uses the state-aware (tier-scaled) gps
 # ---------------------------------------------------------------------------
 def test_building_gps_state_aware_is_tier_scaled(pygame_headless):
-    """``game_economy.building_gps(state, bid)`` scales by the tier stat_mult;
+    """``game_economy.building_gps(state, bid)`` scales by the tier multiplier;
     ``bd.building_gps(b, lvl)`` (the data-layer function) does not.  The UI
     must use the state-aware version so the per-building display matches the
     tier-scaled ``total_gps`` pill at the top of the buildings screen.
@@ -190,17 +189,16 @@ def test_building_gps_state_aware_is_tier_scaled(pygame_headless):
     from core.state import GameState
     from core.game_economy import building_gps as ge_building_gps
     from data import buildings as bd
-    import config as cfg
     state = GameState()
     state.buildings = {"farm": 10}
-    state.ascend_tier = 1  # stat_mult = 1.25
+    state.ascend_tier = 1  # tier_mult = 1.6^1 = 1.6
     b = bd.BY_ID["farm"]
     lvl = state.building_level("farm")
     # Data-layer: unscaled (base_gps * level).
     raw = bd.building_gps(b, lvl)
     assert raw == 10 * 1
-    # State-aware: scaled by the tier stat_mult.
-    expected_mult = cfg.ASCEND_TIERS[1][1]  # 1.25
+    # State-aware: scaled by the tier multiplier (1.6 ** tier).
+    expected_mult = 1.6 ** 1
     scaled = ge_building_gps(state, "farm")
     assert scaled == pytest.approx(raw * expected_mult, rel=1e-6), \
         f"state-aware gps {scaled} != raw {raw} * tier_mult {expected_mult}"

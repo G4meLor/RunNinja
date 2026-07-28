@@ -142,15 +142,18 @@ def test_zone_by_index_no_silent_clamp_for_negative(pygame_headless):
         zone_by_index(-1)
 
 
-def test_zone_by_index_clamps_past_end(pygame_headless):
-    """zone_by_index clamps to the last zone for out-of-range positive indices.
+def test_zone_by_index_cycles_past_end(pygame_headless):
+    """zone_by_index wraps modulo 9 past the last zone (infinite cycling).
 
-    The clamp is intentional and documented — the cnt-infinite-zones
-    caller (a later task) handles cycling. This is the only allowed clamp.
+    The 9 themed zones repeat forever at scaled stats; the wrap is
+    intentional and documented. An index past the end maps to the
+    in-cycle zone (``i % len(ZONES)``), not a clamp to the last zone.
     """
     from data.enemies import zone_by_index, ZONES
-    assert zone_by_index(len(ZONES)) is ZONES[-1]
-    assert zone_by_index(len(ZONES) + 100) is ZONES[-1]
+    n = len(ZONES)
+    assert zone_by_index(n) is ZONES[0]      # cycle 1, in-cycle zone 0
+    assert zone_by_index(n + 4) is ZONES[4]  # cycle 1, in-cycle zone 4
+    assert zone_by_index(n + 100) is ZONES[100 % n]
 
 
 def test_max_total_damage_mult_in_config(pygame_headless):

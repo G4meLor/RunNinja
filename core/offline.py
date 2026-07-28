@@ -37,10 +37,15 @@ def compute(state: GameState) -> dict:
     gps = total_gps(state) * away_mult * OFFLINE_EFFICIENCY
     gold_from_buildings = gps * elapsed
 
-    # Kill-based gold: estimate kills at current zone rate.
+    # Kill-based gold: estimate kills at current zone rate. The zone
+    # scales by the in-cycle zone (zone_index % 9) times the cycle
+    # multiplier (CYCLE_GOLD_MULT ** cycle), mirroring World.zone_gold.
     zone = e.zone_by_index(state.zone_index)
     pool = zone["enemies"]
-    avg_gold = sum(cfg.ZONE_GOLD_BASE * (cfg.ZONE_GOLD_GROWTH ** state.zone_index)
+    cycle = state.zone_index // 9
+    in_cycle = state.zone_index % 9
+    avg_gold = sum(cfg.ZONE_GOLD_BASE * (cfg.ZONE_GOLD_GROWTH ** in_cycle)
+                   * (cfg.CYCLE_GOLD_MULT ** cycle)
                    * en.gold_mult for en in pool) / len(pool)
     density = evo.get("density_pct", 0.0) + _upgrade_pct(state, "enemy_density")
     base_interval = max(cfg.SPAWN_INTERVAL_MIN,

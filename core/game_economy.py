@@ -94,13 +94,11 @@ def _tier_mult(state: GameState) -> float:
     """The current ascension tier's stat multiplier (1.0 at Mortal).
 
     Buildings persist through ascension; their output is scaled by the
-    tier ``stat_mult`` so they stay relevant as the player climbs tiers.
+    tier multiplier so they stay relevant as the player climbs tiers.
     Mirrors ``engine.ninja._ascend_tier_mult`` (kept local to avoid a
-    cross-module dependency for a one-line lookup).
+    cross-module dependency for a one-line lookup): ``1.6 ** tier``.
     """
-    import config as cfg
-    i = min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)
-    return cfg.ASCEND_TIERS[i][1]
+    return 1.6 ** state.ascend_tier
 
 
 def total_gps(state: GameState) -> float:

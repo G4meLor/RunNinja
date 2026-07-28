@@ -48,17 +48,32 @@ class World:
         return min(1.0, self.zone_distance / cfg.ZONE_DISTANCE)
 
     # --- Stat scaling ---
+    #
+    # Infinite zone cycling: the 9 themed zones repeat forever. The
+    # in-cycle zone (``zone_index % 9``) drives the base exponential
+    # growth (so cycle 1 zone 0 has the same base as cycle 0 zone 0),
+    # and the cycle multiplier (``CYCLE_*_MULT ** cycle``) drives the
+    # long-run scaling so the endgame never stalls at zone 9.
+    # ``cycle = floor(zone_index / 9)``; no new state field -- derived.
+    @property
+    def cycle(self) -> int:
+        return self.zone_index // 9
+
+    @property
+    def zone_in_cycle(self) -> int:
+        return self.zone_index % 9
+
     def zone_hp(self, edef) -> float:
-        return (cfg.ZONE_HP_BASE * (cfg.ZONE_HP_GROWTH ** self.zone_index)
-                * edef.hp_mult)
+        base = cfg.ZONE_HP_BASE * (cfg.ZONE_HP_GROWTH ** self.zone_in_cycle)
+        return base * (cfg.CYCLE_HP_MULT ** self.cycle) * edef.hp_mult
 
     def zone_dmg(self, edef) -> float:
-        return (cfg.ZONE_DMG_BASE * (cfg.ZONE_DMG_GROWTH ** self.zone_index)
-                * edef.dmg_mult)
+        base = cfg.ZONE_DMG_BASE * (cfg.ZONE_DMG_GROWTH ** self.zone_in_cycle)
+        return base * (cfg.CYCLE_DMG_MULT ** self.cycle) * edef.dmg_mult
 
     def zone_gold(self, edef) -> float:
-        return (cfg.ZONE_GOLD_BASE * (cfg.ZONE_GOLD_GROWTH ** self.zone_index)
-                * edef.gold_mult)
+        base = cfg.ZONE_GOLD_BASE * (cfg.ZONE_GOLD_GROWTH ** self.zone_in_cycle)
+        return base * (cfg.CYCLE_GOLD_MULT ** self.cycle) * edef.gold_mult
 
     def spawn_interval(self, density_pct: float = 0.0) -> float:
         base = cfg.SPAWN_INTERVAL * (cfg.SPAWN_INTERVAL_MIN / cfg.SPAWN_INTERVAL) ** min(1.0, self.zone_index / 8.0)

@@ -90,10 +90,15 @@ def compute_ninja_stats(state: GameState) -> dict:
 
 
 def _ascend_tier_mult(state: GameState) -> float:
-    """The current ascension tier's stat multiplier (1.0 at Mortal)."""
-    import config as cfg
-    i = min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)
-    return cfg.ASCEND_TIERS[i][1]
+    """The current ascension tier's stat multiplier (1.0 at Mortal).
+
+    ``1.6 ** tier`` -- the exponential tier ladder. The 7 ``ASCEND_TIERS``
+    names (Mortal, Awakened, ...) remain as labels for the ascend UI; the
+    flat ``stat_mult`` column they used to carry is replaced by this
+    formula (steeper at high tiers so the post-ascension economy keeps
+    pace with the cycling zones).
+    """
+    return 1.6 ** state.ascend_tier
 
 
 def _upgrade_value(state: GameState, key: str) -> float:

@@ -138,7 +138,7 @@ class HeroScreen:
         # Tier badge.
         i = min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)
         tier_name = cfg.ASCEND_TIERS[i][0]
-        tier_mult = cfg.ASCEND_TIERS[i][1]
+        tier_mult = 1.6 ** state.ascend_tier
         by = ny + ns.get_height() + 20
         draw_text_center(surf, tier_name, (panel.centerx, by),
                          font_lg(bold=True), _TIER_COL)
@@ -323,7 +323,9 @@ class HeroScreen:
         cur = min(state.ascend_tier, n - 1)
         for i, tier in enumerate(cfg.ASCEND_TIERS):
             name = tier[0]
-            mult = tier[1]
+            # The live tier multiplier is 1.6 ** tier (the flat stat_mult
+            # column is deprecated; the names remain as labels).
+            mult = 1.6 ** i
             x = panel.x + margin + i * slot_w
             r = pygame.Rect(x + 4, y0, slot_w - 8, 28)
             is_cur = (i == cur)

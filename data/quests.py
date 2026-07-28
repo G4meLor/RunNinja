@@ -62,6 +62,16 @@ ACHIEVEMENTS: list[Achievement] = [
                 lambda s: s.best_zone >= 5, reward_amber=2, reward_medals=20),
     Achievement("zone_9", "Voyager", "Reach the final zone.",
                 lambda s: s.best_zone >= 9, reward_amber=5, reward_medals=50),
+    # Cycle-based achievements: the 9 themed zones repeat forever; reaching
+    # a new cycle (zone 9/27/45/90) is the post-endgame progression.
+    Achievement("cycle_1", "Cycler", "Reach cycle 1 (zone 9+).",
+                lambda s: s.best_zone >= 9, reward_amber=5, reward_medals=50),
+    Achievement("cycle_3", "Looper", "Reach cycle 3 (zone 27+).",
+                lambda s: s.best_zone >= 27, reward_amber=15, reward_medals=150),
+    Achievement("cycle_5", "Ouroboros", "Reach cycle 5 (zone 45+).",
+                lambda s: s.best_zone >= 45, reward_amber=40, reward_medals=400),
+    Achievement("cycle_10", "Endless", "Reach cycle 10 (zone 90+).",
+                lambda s: s.best_zone >= 90, reward_amber=100, reward_medals=1000),
     Achievement("combo_100", "Centurion", "Reach a 100 combo.",
                 lambda s: s.best_combo_ever >= 100, reward_amber=3, reward_medals=30),
     Achievement("combo_500", "Combo Master", "Reach a 500 combo.",

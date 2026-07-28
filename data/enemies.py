@@ -124,17 +124,15 @@ def zone_by_id(zone_id: str) -> dict:
 def zone_by_index(i: int) -> dict:
     """Look up a zone by its 0-based index.
 
-    Negative indices raise ValueError. Indices past the last zone clamp to
-    the last zone (the cnt-infinite-zones caller handles cycling); this
-    clamp is intentional and documented, not silent.
+    Negative indices raise ValueError. Indices past the last zone wrap
+    modulo 9 (the infinite-zone-cycling mechanism): the 9 themed zones
+    repeat forever at scaled stats (see ``World.cycle`` and the
+    ``CYCLE_*_MULT`` config). The caller never sees an out-of-range
+    zone because the road cycles.
     """
     if i < 0:
         raise ValueError(f"negative zone index: {i}")
-    if i >= len(ZONES):
-        # Clamp to last: the caller (cnt-infinite-zones, a later task)
-        # handles cycling. This is the only allowed clamp.
-        return ZONES[-1]
-    return ZONES[i]
+    return ZONES[i % len(ZONES)]
 
 
 def boss_for_zone(zone_id: str) -> EnemyDef:
