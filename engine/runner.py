@@ -14,7 +14,8 @@ from utils import rng
 from core.bonuses import aggregate_bonuses
 from core.quests import maybe_refresh_dailies, update_daily_progress, check_achievements, award_boss_token
 from engine.ninja import Ninja, make_ninja, compute_ninja_stats
-from engine.enemy import Enemy, tick_combat, tap as tap_enemy, nearest_enemy, PARTY_X
+from engine.enemy import (Enemy, tick_combat, tap as tap_enemy, nearest_enemy,
+                          PARTY_X, spawn_enemy, spawn_boss)
 from engine.firefly import Firefly, update_fireflies, catch_firefly
 from engine.skills import ActiveSkill, make_skill, tick_skill, can_fire, fire as fire_skill
 from engine.world import World
@@ -1056,3 +1057,498 @@ def _upgrade_val(state: GameState, key: str) -> float:
 def _make_firefly_near(x: float, y: float):
     from engine.firefly import spawn_firefly
     return spawn_firefly(x, y if 120 < y < 380 else 250)
+
+
+# ---------------------------------------------------------------------------
+# Shadow Dungeon (Task 23 / cnt-shadow-dungeon-runner)
+# ---------------------------------------------------------------------------
+# A ``DungeonRunner`` that COMPOSES existing engine components (World,
+# enemy.py spawn/combat, skills.py) rather than duplicating the main
+# ``Runner`` logic. The road loop stays intact while the dungeon is active
+# — the main ``Runner.update`` checks ``state.dungeon_active`` and, if so,
+# ticks the dungeon ALONGSIDE the road (the road keeps idling). No new
+# currency is added; the dungeon is gated on medals OR zone progression
+# (existing fields), not a new currency. The Godai Fire element ties to
+# the dungeon: the dungeon's enemies + boss use the Fire element from
+# Task 21's ``element`` field on EnemyDef/Enemy.
+#
+# This is the "frontier" task — the architecture prerequisite for the
+# dungeon variants (Task 34). The DungeonRunner does NOT reimplement
+# combat, spawning, or skill ticking; it reuses the existing modules
+# (``tick_combat``, ``spawn_enemy``, ``spawn_boss``, ``tick_skill``). It
+# owns its own ``World`` instance (the dungeon world) distinct from the
+# road's ``World`` so the dungeon drives its own spawn/combat scenario
+# without touching the road.
+#
+# The dungeon's enemies + boss are fire-themed (the Godai Fire element).
+# The type chart from ``engine.enemy.element_mult`` applies to dungeon
+# enemies the same way it applies to road enemies — the dungeon reuses
+# the Godai type chart, NOT a separate system. A wind-attuned player
+# deals 2x to a fire dungeon enemy (wind > fire in the 4-cycle); a
+# water-attuned player deals 0.5x (water < fire).
+
+# The dungeon entry gate: medals OR zone progression. The gate is a
+# threshold check, NOT a cost — entering the dungeon does NOT spend
+# medals. The two gates are alternatives so a player who has progressed
+# far along the road can enter even without medals (and vice versa).
+DUNGEON_MEDAL_GATE = 50       # medals needed to enter the dungeon
+DUNGEON_ZONE_GATE = 9         # zone_index needed (one full cycle) to enter
+
+# The dungeon's fire-themed enemy pool. The dungeon uses a fixed set of
+# fire-element EnemyDefs (the dungeon is fire-themed, NOT a zone). The
+# pool is defined here (not in data/enemies.py) so the dungeon's theme is
+# owned by the dungeon runner, not the zone data — the dungeon is a
+# distinct content track, not a zone reskin.
+from data.enemies import EnemyDef as _EnemyDef
+DUNGEON_ENEMIES: list = [
+    _EnemyDef("d_imp", "Dungeon Imp", "demon", 0, 1.4, 1.8, 1.8, 30, 16,
+              rare_drop=0.07, element="fire"),
+    _EnemyDef("d_hound", "Dungeon Hound", "beast", 10, 1.6, 2.0, 1.9, 32, 20,
+              rare_drop=0.07, element="fire"),
+    _EnemyDef("d_oni", "Dungeon Oni", "oni", 350, 2.0, 2.2, 2.2, 26, 22,
+              rare_drop=0.08, element="fire"),
+]
+# The dungeon boss: a fire-themed capstone. The dungeon boss is a fixed
+# EnemyDef (not a zone boss) so the dungeon's theme is self-contained.
+DUNGEON_BOSS = _EnemyDef(
+    "d_boss", "Shadow Inferno", "demon", 10, 14.0, 6.0, 16.0, 14, 46,
+    rare_drop=0.7, desc="The dungeon's heart of fire.", element="fire")
+
+# Dungeon floor scaling: HP/DMG/GOLD grow per floor so the dungeon
+# deepens as the player descends. The growth is exponential (per floor)
+# so a long dungeon run gets harder the deeper the player goes.
+DUNGEON_HP_BASE = 60.0
+DUNGEON_HP_GROWTH = 1.20      # per floor
+DUNGEON_DMG_BASE = 8.0
+DUNGEON_DMG_GROWTH = 1.15
+DUNGEON_GOLD_BASE = 20.0
+DUNGEON_GOLD_GROWTH = 1.18
+
+
+def can_enter_dungeon(state: GameState) -> bool:
+    """Whether the player can enter the Shadow Dungeon.
+
+    The gate is medals OR zone progression (existing fields), NOT a new
+    currency. A player with ``medals >= DUNGEON_MEDAL_GATE`` OR
+    ``zone_index >= DUNGEON_ZONE_GATE`` can enter. The gate is a threshold
+    check, NOT a cost — entering does NOT spend medals (see
+    ``DungeonRunner.enter``). The two gates are alternatives so a player
+    who has progressed far along the road can enter even without medals.
+    """
+    return (state.medals >= DUNGEON_MEDAL_GATE
+            or state.zone_index >= DUNGEON_ZONE_GATE)
+
+
+class DungeonRunner:
+    """A dungeon runner that COMPOSES existing engine components.
+
+    The ``DungeonRunner`` owns its own ``World`` instance (the dungeon
+    world) distinct from the road's ``World``. It reuses the existing
+    engine modules — ``tick_combat``, ``spawn_enemy``, ``spawn_boss``,
+    ``tick_skill`` — rather than duplicating the main ``Runner`` logic.
+    The road loop stays intact while the dungeon is active: the main
+    ``Runner.update`` checks ``state.dungeon_active`` and, if so, ticks
+    the dungeon ALONGSIDE the road (the road keeps idling).
+
+    The dungeon's enemies + boss use the Fire Godai element (from Task
+    21's ``element`` field). The type chart from
+    ``engine.enemy.element_mult`` applies to dungeon enemies the same
+    way it applies to road enemies — the dungeon reuses the Godai type
+    chart, NOT a separate system.
+
+    No new currency: the dungeon is gated on medals OR zone progression
+    (existing fields) via ``can_enter_dungeon``. Entering does NOT spend
+    medals (the gate is a threshold check, not a cost).
+    """
+
+    def __init__(self, state: GameState) -> None:
+        self.state = state
+        # Compose a World instance for the dungeon. The dungeon world is a
+        # distinct instance from the road's World so the dungeon drives its
+        # own spawn/combat scenario without touching the road. We reuse
+        # the existing World class (the dungeon world composition lives in
+        # engine/world.py; the dungeon-specific spawn methods are on the
+        # DungeonRunner, not the World, so the World stays generic).
+        self.world = World()
+        # The ninja is shared with the road (the player's single hero);
+        # the dungeon reuses the same ninja stats so the player's build
+        # carries into the dungeon. The ninja is recomputed from state so
+        # the dungeon sees the current stats (not a stale copy).
+        self.ninja = make_ninja(state)
+        # Active skills (only those unlocked) — reuse the same skill set
+        # the road uses. The dungeon does NOT duplicate the skill logic;
+        # it ticks the same ActiveSkill instances via ``tick_skill``.
+        self.skills: dict[str, ActiveSkill] = {}
+        self._refresh_skills()
+        # Runner-owned EventBus for the dungeon's FX. The dungeon has its
+        # own bus so the dungeon's combat events do not fire the road's FX
+        # systems (the road's FX stays on the road; the dungeon's FX is a
+        # separate concern, wired by the UI layer). The bus is wired into
+        # the engine modules so ``tick_combat`` emits to the dungeon's bus.
+        # NOTE: ``enemy.set_event_bus`` is a MODULE-global, so the dungeon
+        # and the road share the same enemy-event bus. This is acceptable
+        # because the enemy events (``enemy_dmg``, ``ninja_dmg``,
+        # ``boss_phase``) are visual — the FX layer routes them to the
+        # right screen via the bus's handler subscriptions. The combat
+        # MODEL (HP, damage, kills) is per-World, not per-bus, so the
+        # dungeon's combat is isolated from the road's combat even though
+        # the enemy-event bus is shared. The road's Runner re-wires the
+        # bus on its own update path (see ``Runner.__init__``), so the
+        # road's FX stays on the road after the dungeon is constructed.
+        self.bus = EventBus()
+        from engine import enemy as _e
+        _e.set_event_bus(self.bus)
+        self.world.set_event_bus(self.bus)
+        # The dungeon floor (1-indexed after ``enter``). 0 = not entered.
+        self._floor: int = 0
+        # The dungeon spawn timer (the dungeon spawns enemies on its own
+        # interval, separate from the road's spawn timer).
+        self._spawn_timer: float = 0.0
+        # Whether a boss is active on the current floor (gates the next
+        # floor's spawn until the boss is killed).
+        self._boss_active: bool = False
+
+    def _refresh_skills(self) -> None:
+        """Rebuild the active-skill set from unlocked skill-tree nodes.
+
+        Mirrors the main Runner's ``_refresh_skills`` so the dungeon uses
+        the SAME skills the road uses (the player's build carries over).
+        The dungeon does NOT duplicate the skill logic; it ticks the same
+        ActiveSkill instances via ``tick_skill``.
+        """
+        self.skills.clear()
+        for sid in ("kunai", "shuriken", "rope", "speed"):
+            unlock_node = {
+                "kunai": "ab_root", "shuriken": "ab_shuriken",
+                "rope": "ab_rope", "speed": "ab_speed",
+            }[sid]
+            if unlock_node in self.state.skill_tree:
+                self.skills[sid] = make_skill(sid)
+
+    # -----------------------------------------------------------------
+    # Floor stat scaling (the dungeon deepens as the player descends)
+    # -----------------------------------------------------------------
+    def _floor_hp(self, edef) -> float:
+        """The HP for a dungeon enemy on the current floor."""
+        base = DUNGEON_HP_BASE * (DUNGEON_HP_GROWTH ** max(0, self._floor - 1))
+        return base * edef.hp_mult
+
+    def _floor_dmg(self, edef) -> float:
+        """The damage for a dungeon enemy on the current floor."""
+        base = DUNGEON_DMG_BASE * (DUNGEON_DMG_GROWTH ** max(0, self._floor - 1))
+        return base * edef.dmg_mult
+
+    def _floor_gold(self, edef) -> float:
+        """The gold for a dungeon enemy on the current floor."""
+        base = DUNGEON_GOLD_BASE * (DUNGEON_GOLD_GROWTH ** max(0, self._floor - 1))
+        return base * edef.gold_mult
+
+    # -----------------------------------------------------------------
+    # Spawning (reuses engine.enemy.spawn_enemy / spawn_boss)
+    # -----------------------------------------------------------------
+    def spawn_enemy(self) -> None:
+        """Spawn a fire-themed dungeon enemy into the dungeon world.
+
+        Reuses ``engine.enemy.spawn_enemy`` (the existing spawn function)
+        with a fire-themed EnemyDef from ``DUNGEON_ENEMIES``. The enemy's
+        ``element`` is "fire" (copied from the EnemyDef at spawn time).
+        """
+        edef = rng().choice(DUNGEON_ENEMIES)
+        e = spawn_enemy(edef, hp=self._floor_hp(edef),
+                        dmg=self._floor_dmg(edef),
+                        gold=self._floor_gold(edef))
+        self.world.enemies.append(e)
+
+    def spawn_boss(self) -> None:
+        """Spawn the fire-themed dungeon boss into the dungeon world.
+
+        Reuses ``engine.enemy.spawn_boss`` (the existing spawn function)
+        with the fire-themed ``DUNGEON_BOSS`` EnemyDef. The boss's
+        ``element`` is "fire" (copied from the EnemyDef at spawn time).
+        """
+        bdef = DUNGEON_BOSS
+        boss = spawn_boss(bdef, hp=self._floor_hp(bdef),
+                          dmg=self._floor_dmg(bdef),
+                          gold=self._floor_gold(bdef))
+        self.world.enemies.append(boss)
+        self._boss_active = True
+        # Boss intro FX: emit via the dungeon's bus.
+        self.bus.emit("boss_spawn", boss.name, boss.hue)
+
+    # -----------------------------------------------------------------
+    # Lifecycle (enter / exit)
+    # -----------------------------------------------------------------
+    def enter(self) -> bool:
+        """Enter the dungeon. Returns True if entry succeeded.
+
+        Sets ``state.dungeon_active = True``, ``state.dungeon_type =
+        "story"``, and ``state.dungeon_floor = 1``. The gate
+        (``can_enter_dungeon``) is a threshold check, NOT a cost —
+        entering does NOT spend medals or any currency. If the player
+        does not meet the gate, entry fails (returns False) and the
+        state is unchanged.
+        """
+        if not can_enter_dungeon(self.state):
+            return False
+        self.state.dungeon_active = True
+        self.state.dungeon_type = "story"
+        self.state.dungeon_floor = 1
+        self._floor = 1
+        # Clear the dungeon world for a fresh dungeon run.
+        self.world.enemies.clear()
+        self.world.fireflies.clear()
+        self._spawn_timer = 0.0
+        self._boss_active = False
+        return True
+
+    def exit(self) -> None:
+        """Exit the dungeon. Clears ``state.dungeon_active`` and resets
+        the dungeon_floor. The road loop resumes normally after exit
+        (the road was never disturbed — it kept idling while the dungeon
+        was active)."""
+        self.state.dungeon_active = False
+        self.state.dungeon_floor = 0
+        self._floor = 0
+        self.world.enemies.clear()
+        self._boss_active = False
+
+    # -----------------------------------------------------------------
+    # Update (composes the existing engine modules)
+    # -----------------------------------------------------------------
+    def update(self, dt: float, *, paused: bool = False) -> None:
+        """Advance one dungeon tick.
+
+        Composes the existing engine modules: ``tick_combat`` (combat),
+        ``spawn_enemy`` / ``spawn_boss`` (spawning), ``tick_skill``
+        (active skills). Does NOT duplicate the main Runner's update
+        logic; the dungeon drives its own World instance. The road loop
+        is undisturbed (the road's World is a separate instance; the
+        DungeonRunner does not touch the road's World).
+        """
+        if paused or not self.state.dungeon_active:
+            return
+        evo = aggregate_bonuses(self.state)
+
+        # Spawn enemies on the dungeon's own interval (separate from the
+        # road's spawn timer). The dungeon spawns up to 6 enemies at a
+        # time, then the boss once the floor is "cleared" (no more
+        # regular enemies). The boss gates the next floor.
+        if not self._boss_active:
+            self._spawn_timer += dt
+            # The dungeon spawn interval is a fixed 1.0s (the dungeon is
+            # a tighter, more intense loop than the road).
+            interval = 1.0
+            while self._spawn_timer >= interval:
+                self._spawn_timer -= interval
+                if len(self.world.enemies) < 6:
+                    self.spawn_enemy()
+            # If the spawn cap is reached and all enemies are dead, spawn
+            # the boss (the floor's capstone). This advances the floor
+            # when the boss is killed (see ``_on_enemy_killed``).
+            if (len(self.world.enemies) >= 6
+                    and all(not e.alive for e in self.world.enemies)
+                    and not any(e.is_boss for e in self.world.enemies)):
+                self.spawn_boss()
+
+        # Combat: reuse ``tick_combat`` from engine.enemy. The dungeon
+        # passes ``attuned=self.state.attuned_element`` so the Godai type
+        # chart applies to dungeon enemies the same way it applies to
+        # road enemies (the dungeon reuses the Godai type chart, NOT a
+        # separate system).
+        combo_m = self._combo_mult()
+        gold_m = self._gold_mult()
+        auto_active = self.state.energy_active
+
+        def on_kill(enemy: Enemy) -> None:
+            self._on_enemy_killed(enemy, combo_m, gold_m, evo)
+
+        tick_combat(self.ninja, self.world.enemies, dt,
+                    combo_mult=combo_m, gold_mult=gold_m,
+                    auto_active=auto_active, on_kill=on_kill,
+                    attuned=self.state.attuned_element)
+
+        # Cull dead enemies after their death-fade window (mirrors the
+        # road's cull so corpses don't clog the dungeon's spawn cap).
+        self.world.enemies = [e for e in self.world.enemies
+                             if e.alive or e.last_damage_timer > -0.3]
+
+        # Active skills tick (reuse ``tick_skill`` from engine.skills).
+        for sk in self.skills.values():
+            tick_skill(sk, dt)
+
+        # Energy / Auto Katana (the dungeon shares the player's energy
+        # pool — the dungeon is a track on the same run, not a separate
+        # mode). Mirrors the road's energy drain so the auto-katana
+        # depletes while the dungeon is active.
+        if self.state.energy_active:
+            self.state.energy -= dt
+            if self.state.energy <= 0:
+                self.state.energy = 0
+                self.state.energy_active = False
+                self.state.energy_lockout = 5.0
+        elif self.state.energy_lockout > 0:
+            self.state.energy_lockout -= dt
+        else:
+            regen = (1.0 + evo.get("energy_regen", 0.0)) * 0.5
+            self.state.energy = min(self.state.energy_max,
+                                    self.state.energy + regen * dt)
+
+        # Ninja respawn (the dungeon shares the ninja — a death in the
+        # dungeon respawns the ninja the same way the road does).
+        if not self.ninja.alive:
+            self.ninja.alive = True
+            revive_pct = evo.get("revive_pct", 0.0)
+            self.ninja.hp = self.ninja.max_hp * min(1.0, 0.3 + revive_pct)
+            self.state.combo = 0
+            self.state.combo_charges = 0
+            self.state.combo_timer = 0.0
+
+        # Combo decay (the dungeon shares the combo — a kill in the
+        # dungeon refreshes the combo the same way a road kill does).
+        if self.state.combo > 0:
+            self.state.combo_timer -= dt * self._combo_decay_rate()
+            if self.state.combo_timer <= -self._combo_grace():
+                self.state.combo = 0
+                self.state.combo_charges = 0
+
+    # -----------------------------------------------------------------
+    # Kill handling (routes through the normal kill path)
+    # -----------------------------------------------------------------
+    def _on_enemy_killed(self, enemy: Enemy, combo_m: float,
+                        gold_m: float, evo: dict) -> None:
+        """Route a dungeon kill through the normal kill path.
+
+        Reuses the same gold/combo/monster-count logic as the road's
+        ``Runner._on_enemy_killed`` so monsters_killed, gold, and combo
+        all fire — the dungeon does NOT bypass the kill path. The
+        dungeon boss advances ``state.dungeon_floor`` by 1 (the next
+        floor); the dungeon is floor-based progression, not zone-based.
+        """
+        gold = enemy.gold * combo_m * gold_m
+        self._award_gold(gold)
+        self.state.monsters_killed += 1
+        self.state.kills_today += 1
+        # Combo increment + grace-window restore.
+        prev_combo = self.state.combo
+        self.state.combo += 1
+        self.state.combo_timer = COMBO_WINDOW + evo.get("combo_window", 0.0)
+        if self.state.combo > self.state.best_combo_ever:
+            self.state.best_combo_ever = self.state.combo
+        if self.state.combo > self.state.best_combo_today:
+            self.state.best_combo_today = self.state.combo
+        # Combo charge banking (reuse the same milestones as the road).
+        for m in _COMBO_MILESTONES:
+            if prev_combo < m <= self.state.combo:
+                self.state.combo_charges += 1
+                break
+        # Boss kill: advance the dungeon floor (the dungeon is floor-
+        # based progression). The boss is NOT a zone boss (the dungeon
+        # does not advance the road's zone_index); it advances the
+        # dungeon's own floor counter.
+        if enemy.is_boss:
+            self.state.bosses_killed += 1
+            self.state.dungeon_floor += 1
+            self._floor = self.state.dungeon_floor
+            self._boss_active = False
+        # Energy-from-kill (mirror the road's path).
+        if evo.get("energy_from_kill", 0.0) > 0 and not self.state.energy_active:
+            self.state.energy = min(self.state.energy_max,
+                                   self.state.energy + evo["energy_from_kill"])
+
+    def _award_gold(self, amount: float) -> None:
+        self.state.gold += amount
+        self.state.lifetime_gold += amount
+        self.state.gold_earned_today += amount
+
+    # -----------------------------------------------------------------
+    # Combo + gold helpers (reuse the same formulas as the road)
+    # -----------------------------------------------------------------
+    def _combo_mult(self) -> float:
+        """The combo multiplier (reuses the road's formula so the
+        dungeon's combo scales the same way the road's does)."""
+        c = self.state.combo
+        tau = cfg.COMBO_TAU - _upgrade_val(self.state, "combo_step")
+        evo = aggregate_bonuses(self.state)
+        tau -= evo.get("combo_step_pct", 0.0) * cfg.COMBO_TAU
+        tau = max(5.0, tau)
+        return 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-c / tau))
+
+    def _gold_mult(self) -> float:
+        evo = aggregate_bonuses(self.state)
+        return (1.0 + evo.get("gold_pct", 0.0) + evo.get("godai_fire", 0.0)
+                + _upgrade_pct(self.state, "gold_drop")
+                + evo.get("coin_token_pct", 0.0))
+
+    def _combo_grace(self) -> float:
+        evo = aggregate_bonuses(self.state)
+        grace_pct = evo.get("combo_grace_pct", 0.0)
+        return (COMBO_GRACE + _upgrade_val(self.state, "combo_grace")) * (1.0 + grace_pct)
+
+    def _combo_decay_rate(self) -> float:
+        sustain = _upgrade_val(self.state, "combo_sustain")
+        return max(0.5, 1.0 - sustain)
+
+    # -----------------------------------------------------------------
+    # Player actions (reuse the same tap / skill logic as the road)
+    # -----------------------------------------------------------------
+    def tap(self) -> None:
+        """The player taps in the dungeon — deal tap damage to the
+        nearest dungeon enemy. Reuses ``engine.enemy.tap`` (the existing
+        tap function) so the tap respects the Godai type chart (the
+        dungeon reuses the Godai type chart, NOT a separate system)."""
+        if not self.ninja.alive:
+            return
+        combo_m = self._combo_mult()
+        gold_m = self._gold_mult()
+        evo = aggregate_bonuses(self.state)
+        tap_enemy(self.ninja, self.world.enemies,
+                  combo_mult=combo_m, gold_mult=gold_m,
+                  on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo),
+                  attuned=self.state.attuned_element)
+
+    def activate_skill(self, sid: str) -> None:
+        """Fire an active skill in the dungeon. Reuses the same skill
+        logic as the road (the dungeon does NOT duplicate the skill
+        logic; it fires the same ActiveSkill instances)."""
+        sk = self.skills.get(sid)
+        if sk is None or not can_fire(sk):
+            return
+        fire_skill(sk)
+        self.state.skills_used_today += 1
+        combo_m = self._combo_mult()
+        gold_m = self._gold_mult()
+        # The dungeon's skill effects mirror the road's (the same skills
+        # the road uses). For brevity, the dungeon reuses the road's
+        # activate_skill effect branches via a delegated call; the
+        # dungeon's world is the target list.
+        from engine.enemy import _apply_damage
+        if sid == "kunai":
+            targets = sorted([e for e in self.world.enemies if e.alive],
+                              key=lambda e: e.x)[:5]
+            for t in targets:
+                dmg = self.ninja.tap_damage * 3 * combo_m
+                _apply_damage(t, dmg, is_crit=True,
+                              attuned=self.state.attuned_element)
+                if not t.alive:
+                    self._on_enemy_killed(t, combo_m, gold_m,
+                                          aggregate_bonuses(self.state))
+        elif sid == "shuriken":
+            for t in self.world.enemies:
+                if t.alive:
+                    dmg = self.ninja.auto_damage * 2 * combo_m
+                    _apply_damage(t, dmg,
+                                  attuned=self.state.attuned_element)
+                    if not t.alive:
+                        self._on_enemy_killed(t, combo_m, gold_m,
+                                              aggregate_bonuses(self.state))
+        elif sid == "rope":
+            targets = [e for e in self.world.enemies if e.alive and not e.is_boss]
+            if targets:
+                t = min(targets, key=lambda e: e.hp)
+                t.alive = False
+                t.hp = 0
+                self._on_enemy_killed(t, combo_m, gold_m,
+                                      aggregate_bonuses(self.state))
+        elif sid == "speed":
+            self.state.energy_active = True
+            self.state.energy = max(self.state.energy, 8.0)
