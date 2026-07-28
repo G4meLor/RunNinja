@@ -31,7 +31,7 @@ import pygame
 
 import config as cfg
 from theme import font_huge, draw_bar
-from utils import clamp, ease_out_cubic, ease_in_out_cubic
+from utils import clamp, ease_out_cubic, ease_in_out_cubic, lerp
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +60,22 @@ DARKEN_ALPHA_HOLD = 90        # lingering dim while the boss is alive
 HEALTH_BAR_H = 18
 HEALTH_BAR_Y = cfg.HUD_H + 8
 HEALTH_BAR_MARGIN = 240        # inset from left/right edges
+
+# Phase transition (Task 13): a ~0.8s nameplate flash + banner + hue shift
+# that fires when the boss crosses an HP milestone (75/50/25%). No pause --
+# the boss keeps attacking while the transition plays. The banner shows the
+# new phase label; the hue shifts toward red as the phase deepens.
+PHASE_TRANSITION_DURATION = 0.8
+PHASE_BANNER_TIME = 0.45      # banner slide-in + hold + slide-out
+PHASE_FLASH_TIME = 0.25       # nameplate flash (white -> normal)
+PHASE_HUE_SHIFT_TIME = 0.8   # hue eases toward red over the whole transition
+
+# Phase labels shown on the banner (short, punchy).
+_PHASE_LABELS = {
+    1: "PHASE 2 — PROJECTILE",
+    2: "PHASE 3 — HAZARD",
+    3: "PHASE 4 — SHIELD",
+}
 
 # Red glow palette (hue-independent; bosses are always "red threat").
 _GLOW = (255, 60, 70)
@@ -174,6 +190,8 @@ class BossFxSystem:
         "_name", "_hue", "_t", "_intro_done", "_running",
         "_bar_pct", "_shake_pending", "_name_y0", "_name_y1",
         "_name_surf", "_bar_w", "_miniboss",
+        # Phase transition (Task 13): nameplate flash + banner + hue shift.
+        "_phase_active", "_phase_t", "_phase", "_phase_name", "_phase_hue",
     )
 
     def __init__(self) -> None:
@@ -195,6 +213,14 @@ class BossFxSystem:
         # roadblock, not a zone climax — no health bar stays after the
         # brief intro).
         self._miniboss: bool = False
+        # Phase transition (Task 13): a ~0.8s nameplate flash + banner +
+        # hue shift that fires when the boss crosses an HP milestone. No
+        # pause — the boss keeps attacking while the transition plays.
+        self._phase_active: bool = False
+        self._phase_t: float = 0.0
+        self._phase: int = 0
+        self._phase_name: str = ""
+        self._phase_hue: int = 0
 
     # --- public API -------------------------------------------------------
     def start(self, boss_name: str, boss_hue: int) -> None:
@@ -228,6 +254,22 @@ class BossFxSystem:
         self._shake_pending = True
         self._name_surf = _name_surface(name, self._hue)
 
+    def start_phase(self, name: str, hue: int, phase: int) -> None:
+        """Trigger a phase-transition visual: nameplate flash + banner + hue shift.
+
+        Fires when the boss crosses an HP milestone (75/50/25%, i.e. phase
+        1/2/3). Plays over ~0.8s WITHOUT pausing — the boss keeps attacking
+        while the transition plays. The banner shows the new phase label;
+        the hue shifts toward red as the phase deepens (the boss gets more
+        desperate). Reuses the existing banner + nameplate machinery so the
+        transition feels like part of the boss intro, not a separate system.
+        """
+        self._phase_active = True
+        self._phase_t = 0.0
+        self._phase = int(phase)
+        self._phase_name = name
+        self._phase_hue = int(hue)
+
     def stop(self) -> None:
         """Clear the overlay (call when the boss dies)."""
         self._intro_done = False
@@ -238,6 +280,12 @@ class BossFxSystem:
         self._name_surf = None
         self._bar_pct = 1.0
         self._shake_pending = False
+        # Clear any in-flight phase transition.
+        self._phase_active = False
+        self._phase_t = 0.0
+        self._phase = 0
+        self._phase_name = ""
+        self._phase_hue = 0
 
     @property
     def active(self) -> bool:
@@ -263,6 +311,14 @@ class BossFxSystem:
                 if self._miniboss:
                     self._running = False
                     self._name_surf = None
+        # Phase transition (Task 13): advance the ~0.8s nameplate flash +
+        # banner + hue shift. No pause — the boss keeps attacking while
+        # the transition plays (this only advances the visual timeline).
+        if self._phase_active:
+            self._phase_t = min(PHASE_TRANSITION_DURATION,
+                                self._phase_t + dt)
+            if self._phase_t >= PHASE_TRANSITION_DURATION:
+                self._phase_active = False
 
     def draw(self, surf: pygame.Surface, boss_hp_pct: float) -> None:
         """Draw the overlay.  ``boss_hp_pct`` is the boss's hp/max_hp, 0..1."""
@@ -276,6 +332,11 @@ class BossFxSystem:
         # zone climax, so the intro is shorter and does not linger.
         if self._miniboss:
             self._draw_miniboss(surf, w, h)
+            # Phase transition overlays play on top of the miniboss intro
+            # too (a miniboss can phase if it somehow reaches the
+            # thresholds; the visuals are shared).
+            if self._phase_active:
+                self._draw_phase_transition(surf, w, h)
             return
 
         # --- Darken ---
@@ -337,6 +398,101 @@ class BossFxSystem:
                      fill=_GLOW, bg=(40, 12, 18), border=_GLOW_DIM, radius=3)
             # Label the bar once it's fully revealed.
             if self._intro_done and self._name:
+                lbl = _boss_label(self._name)
+                lr = lbl.get_rect(midleft=(br.x, br.centery))
+                surf.blit(lbl, lr)
+
+        # Phase transition overlay (Task 13): nameplate flash + banner +
+        # hue shift on top of the persistent health bar. No pause — the
+        # boss keeps attacking while the transition plays.
+        if self._phase_active:
+            self._draw_phase_transition(surf, w, h)
+
+    def _draw_phase_transition(self, surf: pygame.Surface, w: int, h: int) -> None:
+        """The ~0.8s phase-transition overlay: nameplate flash + banner + hue shift.
+
+        Fires when the boss crosses an HP milestone (75/50/25%, i.e. phase
+        1/2/3). Plays WITHOUT pausing — the boss keeps attacking while the
+        transition plays. Three layers, all driven by ``_phase_t``:
+          1. Nameplate flash: a white flash on the boss-name label that
+             fades out over PHASE_FLASH_TIME (0.25s).
+          2. Banner: a thin band slides in from the top, shows the phase
+             label, then slides back out over PHASE_BANNER_TIME (0.45s).
+          3. Hue shift: the health bar fill eases toward red over the
+             whole transition (PHASE_HUE_SHIFT_TIME, 0.8s) so the boss
+             reads as more desperate at deeper phases.
+        All pygame primitives + cached fonts; no per-frame allocations.
+        """
+        t = self._phase_t
+        cx = w // 2
+
+        # --- 1. Nameplate flash (white -> normal over PHASE_FLASH_TIME) ---
+        if t < PHASE_FLASH_TIME:
+            # Ease the flash out (bright at t=0, normal by t=PHASE_FLASH_TIME).
+            fp = 1.0 - ease_in_out_cubic(t / PHASE_FLASH_TIME)
+            flash_alpha = int(180 * fp)
+            if flash_alpha > 0 and self._name:
+                # Flash a bright band over the health-bar label area.
+                lbl = _boss_label(self._name)
+                lr = lbl.get_rect(midleft=(HEALTH_BAR_MARGIN, HEALTH_BAR_Y + 4))
+                flash = pygame.Surface(lbl.get_size(), pygame.SRCALPHA)
+                flash.fill((255, 255, 255, flash_alpha))
+                surf.blit(flash, lr, special_flags=pygame.BLEND_RGBA_ADD)
+
+        # --- 2. Banner (slide in, hold, slide out over PHASE_BANNER_TIME) ---
+        if t < PHASE_BANNER_TIME:
+            label = _PHASE_LABELS.get(self._phase, "PHASE")
+            # Slide in for the first 40%, hold 20%, slide out the last 40%.
+            p = t / PHASE_BANNER_TIME
+            if p < 0.4:
+                bp = ease_out_cubic(p / 0.4)
+                band_y = int(lerp(-40, cfg.ROAD_TOP + 30, bp))
+                band_alpha = int(235 * bp)
+            elif p < 0.6:
+                band_y = cfg.ROAD_TOP + 30
+                band_alpha = 235
+            else:
+                bp = ease_out_cubic((p - 0.6) / 0.4)
+                band_y = int(lerp(cfg.ROAD_TOP + 30, -40, bp))
+                band_alpha = int(235 * (1.0 - bp))
+            if band_alpha > 0:
+                band_h = 34
+                band = pygame.Surface((w, band_h), pygame.SRCALPHA)
+                # Deep red-tinted band for the "threat" read.
+                pygame.draw.rect(band, (50, 10, 20, band_alpha),
+                                 band.get_rect(), border_radius=6)
+                # Thin accent line top + bottom.
+                pygame.draw.line(band, (*_GLOW, band_alpha),
+                                 (40, 4), (w - 40, 4), 2)
+                pygame.draw.line(band, (*_GLOW, band_alpha),
+                                 (40, band_h - 6), (w - 40, band_h - 6), 2)
+                surf.blit(band, (0, band_y))
+                # Phase label centered on the band.
+                from theme import font_md
+                txt = font_md(bold=True).render(label, True, _TEXT)
+                txt.set_alpha(band_alpha)
+                tr = txt.get_rect(center=(cx, band_y + band_h // 2))
+                surf.blit(txt, tr)
+
+        # --- 3. Hue shift (health bar fill eases toward red) ---
+        # The shift is visual-only; it does not change the bar's pct, just
+        # the fill color. We re-draw the bar with a red-shifted fill that
+        # eases back to the normal glow over PHASE_HUE_SHIFT_TIME.
+        if t < PHASE_HUE_SHIFT_TIME and self._intro_done:
+            hp = 1.0 - ease_in_out_cubic(t / PHASE_HUE_SHIFT_TIME)
+            # Lerp the fill from a bright-red flash back to the normal glow.
+            flash_fill = (255, 90, 100)
+            fill = (int(flash_fill[0] + (_GLOW[0] - flash_fill[0]) * (1.0 - hp)),
+                    int(flash_fill[1] + (_GLOW[1] - flash_fill[1]) * (1.0 - hp)),
+                    int(flash_fill[2] + (_GLOW[2] - flash_fill[2]) * (1.0 - hp)))
+            br = pygame.Rect((w - self._bar_w) // 2, HEALTH_BAR_Y,
+                             self._bar_w, HEALTH_BAR_H)
+            panel = pygame.Rect(br.x - 4, br.y - 4, br.w + 8, br.h + 8)
+            pygame.draw.rect(surf, (20, 8, 12), panel, border_radius=4)
+            pygame.draw.rect(surf, _GLOW_DIM, panel, 1, border_radius=4)
+            draw_bar(surf, br, self._bar_pct,
+                     fill=fill, bg=(40, 12, 18), border=_GLOW_DIM, radius=3)
+            if self._name:
                 lbl = _boss_label(self._name)
                 lr = lbl.get_rect(midleft=(br.x, br.centery))
                 surf.blit(lbl, lr)

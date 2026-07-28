@@ -96,6 +96,7 @@ class Runner:
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
         self.bus.on("miniboss_spawn", self._on_miniboss_spawn)
+        self.bus.on("boss_phase", self._on_boss_phase)
         self.bus.on("firefly_spawn", self.firefly_fx.on_spawn)
         # Wire the bus into the engine modules.
         from engine import enemy as _e
@@ -146,6 +147,17 @@ class Runner:
         less-dramatic reveal (the brief calls for "a brief" intro).
         """
         self.boss_fx.start_miniboss(name, hue)
+
+    def _on_boss_phase(self, name: str, hue: int,
+                       old_phase: int, new_phase: int) -> None:
+        """Trigger phase-transition visuals when the boss phase changes.
+
+        The boss's phase is DERIVED from HP each tick (no state machine);
+        when it crosses a milestone (75/50/25%, i.e. phase 1/2/3), the
+        enemy module emits ``boss_phase`` on the bus and this handler
+        fires the ~0.8s nameplate flash + banner + hue shift (no pause).
+        """
+        self.boss_fx.start_phase(name, hue, new_phase)
 
     # -----------------------------------------------------------------
     # Combo

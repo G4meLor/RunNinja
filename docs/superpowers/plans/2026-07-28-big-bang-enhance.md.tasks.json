@@ -77,7 +77,7 @@
     {
       "id": 11,
       "subject": "Task 11: Render-quality tier",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         6,
         7
@@ -87,7 +87,7 @@
     {
       "id": 12,
       "subject": "Task 12: Infinite zone cycling",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9,
         4
@@ -356,5 +356,5 @@
       "description": "**Goal:** Current accessibility is only 2 toggles. (1) High-contrast mode: high-contrast palette + audit hardcoded colors to read from theme.C. (2) Dyslexia-friendly font: text scale (0.8x-1.6x) + dyslexia toggle (wider spacing / monospace fallback), cached. (3) Wire cb_symbols.py.\n\n**Files:**\n- Modify: ui/screen_settings.py (accessibility toggles)\n- Modify: theme.py (high-contrast palette, text scale, dyslexia font)\n- Modify: ui/cb_symbols.py (wire it)\n- Modify: core/state.py (text_scale, dyslexia_font, high_contrast)\n- Modify: engine/boss_fx.py (hardcoded _GLOW -> theme.C)\n- Test: tests/test_accessibility.py\n\n**Acceptance Criteria:**\n- [ ] A high-contrast mode toggle with a high-contrast palette; all hardcoded colors read from theme.C\n- [ ] A text scale multiplier (0.8x-1.6x) toggle\n- [ ] A dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\n- [ ] Dyslexia letter-spacing rendering is cached (keyed by size, bold, dyslexia)\n- [ ] cb_symbols.py wired\n- [ ] High-contrast mode ships independently of music\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_settings.py\", \"theme.py\", \"ui/cb_symbols.py\", \"core/state.py\", \"engine/boss_fx.py\", \"tests/test_accessibility.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q\", \"acceptanceCriteria\": [\"High-contrast mode toggle with high-contrast palette; all hardcoded colors read from theme.C\", \"Text scale multiplier (0.8x-1.6x) toggle\", \"Dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\", \"Dyslexia letter-spacing rendering cached (keyed by size, bold, dyslexia)\", \"cb_symbols.py wired\", \"High-contrast mode ships independently of music\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-28T14:36:42.333946Z"
+  "lastUpdated": "2026-07-28T15:18:50.871729Z"
 }

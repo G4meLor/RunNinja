@@ -113,6 +113,39 @@ BOSSES: dict[str, EnemyDef] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Boss soft-phase attack pattern library (Task 13)
+# ---------------------------------------------------------------------------
+# The boss phase is DERIVED from HP each tick (no new state machine, just
+# scaling -- see ``engine.enemy._boss_phase_from_hp``). These labels name
+# the attack layer the boss gains at each HP milestone:
+#   phase 0 (100-75% HP): melee      -- base attack (the boss attacks the
+#                                       ninja on its attack_timer at 1.0s)
+#   phase 1 (75-50% HP):   projectile -- +faster attacks (interval = 1.0/1.3)
+#   phase 2 (50-25% HP):   hazard     -- +faster attacks (interval = 1.0/1.6)
+#   phase 3 (25-0% HP):    summon+shield -- +fastest attacks (interval = 1.0/1.9)
+#                                      + a shield (flat HP buffer that
+#                                      sustained auto-attack DPS breaks
+#                                      through; no regeneration)
+# These scale the existing attack_timer (faster attacks as HP drops), not a
+# new attack-type state machine. The boss never gains a new attack type that
+# requires a separate state machine; it just attacks faster and gains a
+# damage-absorbing shield at the final phase.
+BOSS_PHASE_PATTERNS: dict[int, str] = {
+    0: "melee",
+    1: "projectile",
+    2: "hazard",
+    3: "summon_shield",
+}
+
+# Shield size at phase 3: a fraction of the boss's max HP. The shield is a
+# flat HP buffer that sustained auto-attack DPS breaks through; it does NOT
+# regenerate, so once it's depleted the boss takes full damage. Tuned for
+# the current auto-attack DPS; **gap #4:** re-test after Task 24
+# (gp-tap-auto-rebalance) lands -- the auto vs tap DPS ratio will change.
+BOSS_SHIELD_FRACTION = 0.3
+
+
 def zone_by_id(zone_id: str) -> dict:
     """Look up a zone by its string id. Raises KeyError if unknown."""
     for z in ZONES:

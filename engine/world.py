@@ -220,6 +220,18 @@ class World:
         """Wire the Runner-owned EventBus. Called once by the Runner."""
         self._bus = bus
 
+    @property
+    def boss_phase(self) -> int:
+        """The current boss's phase (0 if no boss, else derived from HP).
+
+        The phase is DERIVED from the boss's HP each tick (no state
+        machine, just scaling -- see ``engine.enemy._update_boss_phase``).
+        This is a read-only convenience for the UI; the source of truth is
+        the ``phase`` field on the boss Enemy.
+        """
+        boss = next((e for e in self.enemies if e.is_boss and e.alive), None)
+        return boss.phase if boss is not None else 0
+
     def reset_for_ascension(self) -> None:
         self.zone_index = 0
         self.zone_distance = 0.0
