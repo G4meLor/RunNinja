@@ -106,6 +106,70 @@ def test_max_particles_cap(pygame_headless):
     )
 
 
+def test_burst_ring_angles_span_full_circle_when_cap_clips(pygame_headless):
+    """When the cap clips burst_ring, the shards must still span the full circle.
+
+    Regression: the original ``burst_ring`` divided by the *requested* count,
+    so a cap-clipped spawn (n < count) bunched the shards into a wedge
+    spanning only ``((n-1)/count) * tau`` of the circle. The fix divides by
+    the actual spawned count so the angles span the full ``0..tau`` range.
+    """
+    import math
+    from engine.particles import ParticleSystem2
+
+    # Cap well below the requested count so the cap clips hard.
+    cap = 10
+    ps = ParticleSystem2(max_particles=cap)
+    cx, cy = 200.0, 200.0
+    radius = 60.0
+    ps.burst_ring(cx, cy, (255, 200, 90), radius=radius, count=24, life=0.5)
+
+    # The cap should have clipped the 24 requested down to <= 10.
+    n = len(ps._active)
+    assert n <= cap, f"cap not enforced: active {n} > cap {cap}"
+    assert n >= 2, f"need >= 2 particles to measure a span, got {n}"
+
+    # Recover each particle's angle from its position relative to the
+    # ring center. All were placed on ``radius`` with a small jitter, so
+    # atan2 of (p.y - cy, p.x - cx) recovers the spawn angle (the small
+    # outward velocity does not move them in the same frame).
+    angles = []
+    for p in ps._active:
+        ax = p.x - cx
+        ay = p.y - cy
+        # Filter out the degenerate center case (shouldn't happen here).
+        if abs(ax) < 1e-6 and abs(ay) < 1e-6:
+            continue
+        angles.append(math.atan2(ay, ax) % math.tau)
+
+    assert len(angles) >= 2
+    # The full circle is tau. A bunched wedge would have a max-min gap
+    # well under tau (e.g. for n=10 of 24, the old code spanned
+    # (9/24)*tau = 0.375*tau). Require the angular span to cover at
+    # least 80% of the circle (generous: the jitter and the atan2
+    # wraparound leave a little slack, but a wedge can't pass).
+    span = max(angles) - min(angles)
+    # Handle wraparound: if the points straddle 0/tau, the min-max
+    # difference underestimates the span. Use the complementary check
+    # (largest gap between consecutive sorted angles) to detect a
+    # bunched wedge instead.
+    angles_sorted = sorted(angles)
+    gaps = [angles_sorted[i + 1] - angles_sorted[i]
+            for i in range(len(angles_sorted) - 1)]
+    # Gap across the 0/tau wraparound.
+    wrap_gap = math.tau - angles_sorted[-1] + angles_sorted[0]
+    largest_gap = max(max(gaps), wrap_gap)
+    # If the shards span the full circle, the largest gap between
+    # consecutive angles is small (roughly tau / n). If they're bunched
+    # into a wedge, the largest gap is close to tau (the empty wedge).
+    # Require the largest gap to be well under half the circle.
+    assert largest_gap < math.tau * 0.5, (
+        f"largest angular gap {largest_gap:.3f} rad "
+        f"({largest_gap / math.tau:.2f} * tau) indicates a bunched wedge, "
+        f"not a full-circle ring (n={n}, angles={angles})"
+    )
+
+
 def test_main_uses_particle_system2():
     """main.Game must instantiate ParticleSystem2, not the legacy ParticleSystem."""
     import main

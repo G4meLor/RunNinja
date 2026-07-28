@@ -271,8 +271,13 @@ class ParticleSystem2:
         if glow is None:
             glow = self.default_glow
         r = rng()
-        for i, p in enumerate(self._spawn(count)):
-            ang = (i / count) * math.tau + r.uniform(-0.05, 0.05)
+        # Divide by the *actual* spawned count, not the requested ``count``,
+        # so the angles span the full circle even when the cap clips
+        # (otherwise the shards bunch into a wedge).
+        spawned = self._spawn(count)
+        n = len(spawned)
+        for i, p in enumerate(spawned):
+            ang = (i / n) * math.tau + r.uniform(-0.05, 0.05) if n else 0.0
             sp = expand * r.uniform(0.7, 1.0)
             px = x + math.cos(ang) * radius
             py = y + math.sin(ang) * radius
