@@ -556,7 +556,13 @@ class Runner:
         # Ninja respawn.
         if not self.ninja.alive:
             self.ninja.alive = True
-            self.ninja.hp = self.ninja.max_hp * 0.3
+            # Task 22: the ``revive_pct`` skill-tree bonus (from the
+            # defense branch's Phoenix Shell node + the legacy EVOLUTION
+            # ``phoenix`` node) raises the respawn HP. Base 0.3 (30%);
+            # each revive_pct point adds to the fraction (capped at 1.0 so
+            # the ninja never respawns above full HP).
+            revive_pct = evo.get("revive_pct", 0.0)
+            self.ninja.hp = self.ninja.max_hp * min(1.0, 0.3 + revive_pct)
             # A death breaks the combo (the ninja dropped). Clear combo
             # + charges; the COMBO LOST banner is NOT fired here (the
             # death is its own feedback).

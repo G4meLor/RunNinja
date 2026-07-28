@@ -240,6 +240,80 @@ def test_combo_sustain_affects_combo_decay(pygame_headless):
     assert upgraded_decay < base_decay, "combo_sustain did not slow decay"
 
 
+def test_combo_window_skill_tree_bonus_is_read(pygame_headless):
+    """The combo branch main chain's ``combo_window`` effect key is read
+    by the engine (the skill-tree bonus, not just the run upgrade).
+
+    The combo branch root (``combo_root``) uses ``combo_window`` as its
+    effect key. The runner's ``_on_enemy_killed`` must read
+    ``evo.get("combo_window", 0.0)`` (the skill-tree bonus) IN ADDITION
+    to ``_upgrade_val(state, "combo_window")`` (the run upgrade) so the
+    skill-tree combo branch main chain actually does something.
+    """
+    from core.state import GameState
+    from engine.runner import Runner, COMBO_WINDOW
+    state = GameState()
+    r = Runner(state)
+    # No combo_window run upgrade, no skill-tree bonus -> base window.
+    state.combo = 0
+    r._on_enemy_killed.__wrapped__ if hasattr(r._on_enemy_killed, "__wrapped__") else None
+    # Simulate a kill to set the combo timer.
+    from engine.enemy import spawn_enemy
+    from data.enemies import zone_by_id
+    edef = zone_by_id("village")["enemies"][0]
+    e = spawn_enemy(edef, hp=1, dmg=0, gold=0)
+    e.alive = False  # already dead so _on_enemy_killed doesn't re-kill
+    from core.bonuses import aggregate_bonuses
+    evo = aggregate_bonuses(state)
+    r._on_enemy_killed(e, 1.0, 1.0, evo)
+    base_timer = state.combo_timer
+    assert base_timer == pytest.approx(COMBO_WINDOW), (
+        f"base combo_timer {base_timer} != COMBO_WINDOW {COMBO_WINDOW}")
+    # Now unlock the combo_root skill-tree node (combo_window +0.5).
+    state.combo = 0
+    state.skill_tree = {"combo_root"}
+    evo = aggregate_bonuses(state)
+    r._on_enemy_killed(e, 1.0, 1.0, evo)
+    skilled_timer = state.combo_timer
+    assert skilled_timer > base_timer, (
+        f"combo_root skill-tree bonus did not extend combo_timer: "
+        f"{skilled_timer} <= {base_timer}")
+
+
+def test_revive_pct_skill_tree_bonus_is_read(pygame_headless):
+    """The ``revive_pct`` skill-tree bonus (from the defense branch's
+    Phoenix Shell node) is read by the engine in the ninja respawn.
+
+    The runner's respawn block must read ``evo.get("revive_pct", 0.0)``
+    and raise the respawn HP above the base 0.3 * max_hp.
+    """
+    from core.state import GameState
+    from engine.runner import Runner
+    state = GameState()
+    r = Runner(state)
+    # Kill the ninja so the respawn block fires on the next update.
+    r.ninja.alive = False
+    r.ninja.hp = 0
+    base_max_hp = r.ninja.max_hp
+    # Without the revive_pct bonus, the ninja respawns at 0.3 * max_hp.
+    r.update(0.1)
+    base_respawn_hp = r.ninja.hp
+    assert base_respawn_hp == pytest.approx(base_max_hp * 0.3), (
+        f"base respawn hp {base_respawn_hp} != 0.3 * {base_max_hp}")
+    # With the revive_pct bonus (from the def_revive1 node, +0.25),
+    # the ninja respawns at (0.3 + 0.25) * max_hp = 0.55 * max_hp.
+    r.ninja.alive = False
+    r.ninja.hp = 0
+    state.skill_tree = {"def_revive1"}
+    r.update(0.1)
+    skilled_respawn_hp = r.ninja.hp
+    assert skilled_respawn_hp > base_respawn_hp, (
+        f"revive_pct skill-tree bonus did not raise respawn hp: "
+        f"{skilled_respawn_hp} <= {base_respawn_hp}")
+    assert skilled_respawn_hp == pytest.approx(base_max_hp * 0.55), (
+        f"revive_pct respawn hp {skilled_respawn_hp} != 0.55 * {base_max_hp}")
+
+
 # ---------------------------------------------------------------------------
 # Reset on ascension -- run upgrades reset (no save-migration risk)
 # ---------------------------------------------------------------------------
