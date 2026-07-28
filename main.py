@@ -18,6 +18,7 @@ import pygame
 import config as cfg
 from utils import rng
 from core.state import GameState
+from core.quality import particle_mult
 from core.login_streak import check_streak, apply_streak
 from engine.runner import Runner
 from assets import init_sfx
@@ -67,10 +68,18 @@ class Game:
         # with the legacy assets.ParticleSystem (burst/trail/update/draw).
         # The death/firefly/combo FX systems keep their own internal pools
         # for now (they are already pooled); this is the main road-FX pool.
-        # Task 10's render tier will rebind max_particles per quality.
-        self.particles = ParticleSystem2()
+        # The render tier caps the active-particle count per quality
+        # (high=600, med=360, low=150); reduced_motion forces the low
+        # tier via effective_render_quality() so the two gates never
+        # diverge.
+        _q = self.state.effective_render_quality()
+        self.particles = ParticleSystem2(
+            max_particles=int(particle_mult(_q) * ParticleSystem2.DEFAULT_MAX_PARTICLES)
+        )
         init_sfx()
         # Wire the death-FX screen-shake callback (boss deaths shake).
+        # reduced_motion forces the low tier, so the death-FX gate reads
+        # the same flag the tier does (the two never diverge).
         self.runner.death_fx.on_shake = self.shake
         self.runner.death_fx.reduced_motion = self.state.reduced_motion
 
@@ -110,18 +119,23 @@ class Game:
         self.paused = not self.paused
 
     def shake(self, amp=6.0, dur=0.25):
-        if self.state.reduced_motion:
+        # The low tier (which reduced_motion forces) disables shake;
+        # med/high allow it. Reading the effective tier keeps this gate
+        # on the same code path as the render tier.
+        if self.state.effective_render_quality() == "low":
             return
         self.shake_amp = max(self.shake_amp, amp)
         self.shake_t = max(self.shake_t, dur)
 
     def hitstop_for(self, dur=0.08):
-        if self.state.reduced_motion:
+        # Hitstop is a motion-heavy effect; gate it on the same tier
+        # path as shake (low disables, med/high allow).
+        if self.state.effective_render_quality() == "low":
             return
         self.hitstop = max(self.hitstop, dur)
 
     def shake_offset(self):
-        if self.shake_t <= 0 or self.state.reduced_motion:
+        if self.shake_t <= 0 or self.state.effective_render_quality() == "low":
             return (0, 0)
         return (int(rng().uniform(-1, 1) * self.shake_amp),
                 int(rng().uniform(-1, 1) * self.shake_amp))

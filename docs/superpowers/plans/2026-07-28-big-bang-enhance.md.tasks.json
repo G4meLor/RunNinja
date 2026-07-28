@@ -28,19 +28,19 @@
     {
       "id": 5,
       "subject": "Task 5: Save-version migration chain",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** save_version=2 is decorative — from_dict uses hasattr+setattr with no migration logic. Add a MIGRATIONS dict of pure functions; load() walks the chain from the file's save_version up to CURRENT. Bump save_version to 3.\n\n**Files:**\n- Modify: core/state.py (MIGRATIONS, load, from_dict)\n- Modify: core/save_manager.py (if it has its own load path)\n- Test: tests/test_save_migration.py\n\n**Acceptance Criteria:**\n- [ ] A MIGRATIONS dict of pure functions, applied in load() by walking from save_version up to CURRENT\n- [ ] save_version bumped to 3 with the first migration (seeds render_quality, attuned_element, dojo, rhythm_streak, etc.)\n- [ ] Each migration is unit-testable with a fixture dict\n- [ ] Never mutates the live save during migration\n- [ ] An existing v2 save loads without data loss after migration\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_save_migration.py -q`\n\n```json:metadata\n{\"files\": [\"core/state.py\", \"core/save_manager.py\", \"tests/test_save_migration.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_save_migration.py -q\", \"acceptanceCriteria\": [\"MIGRATIONS dict of pure functions, applied in load() walking save_version to CURRENT\", \"save_version bumped to 3 with first migration (seeds new-field defaults)\", \"Each migration unit-testable with a fixture dict\", \"Never mutates live save during migration\", \"Existing v2 save loads without data loss after migration\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 6,
       "subject": "Task 6: convert_alpha on sprite surfaces",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** The 5 sprite caches in assets.py create SRCALPHA surfaces but never call .convert_alpha(), so every blit does a slow 32-bit ARGB software composite. Add .convert_alpha() at cache-miss time.\n\n**Files:**\n- Modify: assets.py:27-45,52-103,110-127,134-161,168-182\n- Test: tests/test_convert_alpha.py\n\n**Acceptance Criteria:**\n- [ ] ninja/enemy/firefly/building/pet surfaces all call .convert_alpha() before caching\n- [ ] No behavior change — sprites render identically (smoke test passes)\n- [ ] Blit throughput improves ~1.5-2x in a microbenchmark\n- [ ] Caches remain lazy (no work before display.set_mode)\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_convert_alpha.py -q`\n\n```json:metadata\n{\"files\": [\"assets.py\", \"tests/test_convert_alpha.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_convert_alpha.py -q\", \"acceptanceCriteria\": [\"All 5 sprite surfaces call .convert_alpha() before caching\", \"No behavior change \\u2014 sprites render identically\", \"Blit throughput improves ~1.5-2x\", \"Caches remain lazy (no work before display.set_mode)\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 7,
       "subject": "Task 7: Adopt ParticleSystem2",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         6
       ],
@@ -49,7 +49,7 @@
     {
       "id": 8,
       "subject": "Task 8: Elite enemies + mini-bosses",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -58,7 +58,7 @@
     {
       "id": 9,
       "subject": "Task 9: Building unlock rebalance",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2,
         5
@@ -68,7 +68,7 @@
     {
       "id": 10,
       "subject": "Task 10: Combo Finishers + grace",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -356,5 +356,5 @@
       "description": "**Goal:** Current accessibility is only 2 toggles. (1) High-contrast mode: high-contrast palette + audit hardcoded colors to read from theme.C. (2) Dyslexia-friendly font: text scale (0.8x-1.6x) + dyslexia toggle (wider spacing / monospace fallback), cached. (3) Wire cb_symbols.py.\n\n**Files:**\n- Modify: ui/screen_settings.py (accessibility toggles)\n- Modify: theme.py (high-contrast palette, text scale, dyslexia font)\n- Modify: ui/cb_symbols.py (wire it)\n- Modify: core/state.py (text_scale, dyslexia_font, high_contrast)\n- Modify: engine/boss_fx.py (hardcoded _GLOW -> theme.C)\n- Test: tests/test_accessibility.py\n\n**Acceptance Criteria:**\n- [ ] A high-contrast mode toggle with a high-contrast palette; all hardcoded colors read from theme.C\n- [ ] A text scale multiplier (0.8x-1.6x) toggle\n- [ ] A dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\n- [ ] Dyslexia letter-spacing rendering is cached (keyed by size, bold, dyslexia)\n- [ ] cb_symbols.py wired\n- [ ] High-contrast mode ships independently of music\n\n**Verify:** `SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q`\n\n```json:metadata\n{\"files\": [\"ui/screen_settings.py\", \"theme.py\", \"ui/cb_symbols.py\", \"core/state.py\", \"engine/boss_fx.py\", \"tests/test_accessibility.py\"], \"verifyCommand\": \"SDL_VIDEODRIVER=dummy pytest tests/test_accessibility.py -q\", \"acceptanceCriteria\": [\"High-contrast mode toggle with high-contrast palette; all hardcoded colors read from theme.C\", \"Text scale multiplier (0.8x-1.6x) toggle\", \"Dyslexia-friendly font toggle (wider letter spacing / monospace fallback)\", \"Dyslexia letter-spacing rendering cached (keyed by size, bold, dyslexia)\", \"cb_symbols.py wired\", \"High-contrast mode ships independently of music\"], \"modelTier\": \"standard\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-28T09:59:18.839917Z"
+  "lastUpdated": "2026-07-28T14:36:42.333946Z"
 }

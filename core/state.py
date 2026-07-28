@@ -119,6 +119,24 @@ class GameState:
     cosmic_forge: int = 0           # persistent reincarnation anchor, max 10 (gp-reincarnation-perks)
 
     # -----------------------------------------------------------------
+    # Render-quality tier
+    # -----------------------------------------------------------------
+    def effective_render_quality(self) -> str:
+        """The effective render tier — ``low`` if reduced_motion is on.
+
+        This is the single read-point for the render tier: every FX
+        feature that respects the tier calls this and passes the result
+        to the ``core.quality`` helpers (``particle_mult``,
+        ``glow_enabled``, ``parallax_enabled``). ``reduced_motion``
+        forces ``"low"`` so the accessibility gate and the tier never
+        diverge — toggling reduced_motion on is equivalent to (and a
+        superset of) selecting the low tier.
+        """
+        if self.reduced_motion:
+            return "low"
+        return self.render_quality
+
+    # -----------------------------------------------------------------
     # Building helpers
     # -----------------------------------------------------------------
     def building_level(self, bid: str) -> int:
