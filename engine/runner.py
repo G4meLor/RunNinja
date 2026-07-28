@@ -1180,25 +1180,19 @@ class DungeonRunner:
         # it ticks the same ActiveSkill instances via ``tick_skill``.
         self.skills: dict[str, ActiveSkill] = {}
         self._refresh_skills()
-        # Runner-owned EventBus for the dungeon's FX. The dungeon has its
-        # own bus so the dungeon's combat events do not fire the road's FX
-        # systems (the road's FX stays on the road; the dungeon's FX is a
-        # separate concern, wired by the UI layer). The bus is wired into
-        # the engine modules so ``tick_combat`` emits to the dungeon's bus.
-        # NOTE: ``enemy.set_event_bus`` is a MODULE-global, so the dungeon
-        # and the road share the same enemy-event bus. This is acceptable
-        # because the enemy events (``enemy_dmg``, ``ninja_dmg``,
-        # ``boss_phase``) are visual — the FX layer routes them to the
-        # right screen via the bus's handler subscriptions. The combat
-        # MODEL (HP, damage, kills) is per-World, not per-bus, so the
-        # dungeon's combat is isolated from the road's combat even though
-        # the enemy-event bus is shared. The road's Runner re-wires the
-        # bus on its own update path (see ``Runner.__init__``), so the
-        # road's FX stays on the road after the dungeon is constructed.
+        # The dungeon does NOT wire its own EventBus into
+        # ``engine.enemy``: ``enemy.set_event_bus`` is a MODULE-global, so
+        # calling it here would clobber the road's bus (the road's
+        # ``Runner.__init__`` wired it). Instead, the dungeon's
+        # ``tick_combat`` emits to whatever bus the road wired (the road's
+        # bus), which is fine — the road's FX will show dungeon combat
+        # events too (or the UI layer can suppress them per-screen). The
+        # combat MODEL (HP, damage, kills) is per-World, not per-bus, so
+        # the dungeon's combat is isolated from the road's combat even
+        # though the enemy-event bus is shared. The dungeon keeps a bus
+        # attribute for the UI layer to wire dungeon-specific FX handlers
+        # onto, but the engine modules emit to the road's shared bus.
         self.bus = EventBus()
-        from engine import enemy as _e
-        _e.set_event_bus(self.bus)
-        self.world.set_event_bus(self.bus)
         # The dungeon floor (1-indexed after ``enter``). 0 = not entered.
         self._floor: int = 0
         # The dungeon spawn timer (the dungeon spawns enemies on its own
@@ -1214,16 +1208,21 @@ class DungeonRunner:
         Mirrors the main Runner's ``_refresh_skills`` so the dungeon uses
         the SAME skills the road uses (the player's build carries over).
         The dungeon does NOT duplicate the skill logic; it ticks the same
-        ActiveSkill instances via ``tick_skill``.
+        ActiveSkill instances via ``tick_skill``. The ``skill_cd`` run
+        upgrade reduces the effective cooldown (recomputed here, same as
+        the road); the upgrade resets on ascension.
         """
         self.skills.clear()
+        cd_mult = self._skill_cooldown_mult()
         for sid in ("kunai", "shuriken", "rope", "speed"):
             unlock_node = {
                 "kunai": "ab_root", "shuriken": "ab_shuriken",
                 "rope": "ab_rope", "speed": "ab_speed",
             }[sid]
             if unlock_node in self.state.skill_tree:
-                self.skills[sid] = make_skill(sid)
+                sk = make_skill(sid)
+                sk.cooldown = sk.cooldown * cd_mult
+                self.skills[sid] = sk
 
     # -----------------------------------------------------------------
     # Floor stat scaling (the dungeon deepens as the player descends)
@@ -1428,10 +1427,15 @@ class DungeonRunner:
         self._award_gold(gold)
         self.state.monsters_killed += 1
         self.state.kills_today += 1
-        # Combo increment + grace-window restore.
+        # Combo increment + grace-window restore. The combo_window run
+        # upgrade extends the refresh window (same term as the road's
+        # ``_on_enemy_killed``): the skill-tree bonus (evo) AND the run
+        # upgrade (``_upgrade_val``) both apply.
         prev_combo = self.state.combo
         self.state.combo += 1
-        self.state.combo_timer = COMBO_WINDOW + evo.get("combo_window", 0.0)
+        self.state.combo_timer = (COMBO_WINDOW
+                                  + evo.get("combo_window", 0.0)
+                                  + _upgrade_val(self.state, "combo_window"))
         if self.state.combo > self.state.best_combo_ever:
             self.state.best_combo_ever = self.state.combo
         if self.state.combo > self.state.best_combo_today:
@@ -1488,6 +1492,24 @@ class DungeonRunner:
         sustain = _upgrade_val(self.state, "combo_sustain")
         return max(0.5, 1.0 - sustain)
 
+    def _skill_damage_mult(self) -> float:
+        """The skill damage multiplier from the ``skill_dmg`` run upgrade.
+
+        Mirrors the road's ``skill_damage_mult`` so the dungeon's skills
+        scale the same way the road's do. The upgrade resets on ascension.
+        """
+        return 1.0 + _upgrade_val(self.state, "skill_dmg")
+
+    def _skill_cooldown_mult(self) -> float:
+        """The skill cooldown multiplier from the ``skill_cd`` run upgrade.
+
+        Mirrors the road's ``skill_cooldown_mult`` so the dungeon's skill
+        cooldowns scale the same way the road's do (capped at 0.5 so
+        cooldowns never drop below half). The upgrade resets on ascension.
+        """
+        cd = _upgrade_val(self.state, "skill_cd")
+        return max(0.5, 1.0 - cd)
+
     # -----------------------------------------------------------------
     # Player actions (reuse the same tap / skill logic as the road)
     # -----------------------------------------------------------------
@@ -1509,7 +1531,9 @@ class DungeonRunner:
     def activate_skill(self, sid: str) -> None:
         """Fire an active skill in the dungeon. Reuses the same skill
         logic as the road (the dungeon does NOT duplicate the skill
-        logic; it fires the same ActiveSkill instances)."""
+        logic; it fires the same ActiveSkill instances). The
+        ``skill_dmg`` run upgrade multiplies the damage dealt by all
+        damage skills (kunai/shuriken), same as the road."""
         sk = self.skills.get(sid)
         if sk is None or not can_fire(sk):
             return
@@ -1517,16 +1541,17 @@ class DungeonRunner:
         self.state.skills_used_today += 1
         combo_m = self._combo_mult()
         gold_m = self._gold_mult()
+        skill_m = self._skill_damage_mult()  # Task 22: skill_dmg upgrade
         # The dungeon's skill effects mirror the road's (the same skills
-        # the road uses). For brevity, the dungeon reuses the road's
-        # activate_skill effect branches via a delegated call; the
-        # dungeon's world is the target list.
+        # the road uses). The dungeon's world is the target list; the
+        # skill_dmg multiplier applies on top of the tap/auto * combo
+        # stack so it composes cleanly (same as the road).
         from engine.enemy import _apply_damage
         if sid == "kunai":
             targets = sorted([e for e in self.world.enemies if e.alive],
                               key=lambda e: e.x)[:5]
             for t in targets:
-                dmg = self.ninja.tap_damage * 3 * combo_m
+                dmg = self.ninja.tap_damage * 3 * combo_m * skill_m
                 _apply_damage(t, dmg, is_crit=True,
                               attuned=self.state.attuned_element)
                 if not t.alive:
@@ -1535,7 +1560,7 @@ class DungeonRunner:
         elif sid == "shuriken":
             for t in self.world.enemies:
                 if t.alive:
-                    dmg = self.ninja.auto_damage * 2 * combo_m
+                    dmg = self.ninja.auto_damage * 2 * combo_m * skill_m
                     _apply_damage(t, dmg,
                                   attuned=self.state.attuned_element)
                     if not t.alive:

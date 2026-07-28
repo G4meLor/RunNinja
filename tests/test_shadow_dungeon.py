@@ -341,3 +341,109 @@ def test_dungeon_runner_with_main_runner_smoke(pygame_headless):
     # floor are both > 0).
     assert runner.world.total_distance > 0
     assert state.dungeon_active is True
+
+
+# ---------------------------------------------------------------------------
+# 7. Review fixes: the dungeon does NOT clobber the road's event bus
+# ---------------------------------------------------------------------------
+def test_dungeon_does_not_clobber_road_event_bus(pygame_headless):
+    """Constructing a DungeonRunner must NOT overwrite the road's
+    enemy-event bus. ``engine.enemy.set_event_bus`` is a module-global;
+    if the DungeonRunner calls it, the road's ``tick_combat`` would emit
+    to the dungeon's bus (which has no handlers), breaking the road's
+    combat FX for the rest of the session. The fix: the DungeonRunner
+    does NOT call ``set_event_bus`` — the dungeon's ``tick_combat``
+    emits to whatever bus the road wired."""
+    from core.state import GameState
+    from engine.runner import Runner, DungeonRunner
+    from engine import enemy as _e
+    state = GameState()
+    runner = Runner(state)
+    # The road wired its bus into engine.enemy; snapshot it.
+    road_bus = _e._bus
+    assert road_bus is runner.bus, (
+        "the road's Runner.__init__ did not wire its bus into engine.enemy")
+    # Construct a DungeonRunner — this must NOT clobber the road's bus.
+    dr = DungeonRunner(state)
+    assert _e._bus is road_bus, (
+        "constructing a DungeonRunner clobbered the road's enemy-event "
+        "bus (the dungeon must NOT call engine.enemy.set_event_bus)")
+    # The dungeon's own bus is a separate instance for the UI layer to
+    # wire dungeon-specific FX handlers onto, but the engine modules
+    # emit to the road's shared bus.
+    assert dr.bus is not road_bus
+
+
+def test_dungeon_skill_dmg_upgrade_applies(pygame_headless):
+    """The ``skill_dmg`` run upgrade multiplies the dungeon's kunai /
+    shuriken damage (same as the road). A dungeon with skill_dmg
+    unlocked deals more skill damage than one without."""
+    from core.state import GameState
+    from engine.runner import DungeonRunner
+    from engine.enemy import spawn_enemy
+    from data.enemies import EnemyDef
+    # A dungeon with skill_dmg unlocked: the kunai damage is multiplied
+    # by (1 + skill_dmg upgrade value). We verify by checking the
+    # _skill_damage_mult helper returns > 1.0 when the upgrade is set.
+    state = GameState()
+    state.medals = 100
+    state.upgrades["skill_dmg"] = 5
+    dr = DungeonRunner(state)
+    assert dr._skill_damage_mult() > 1.0, (
+        "the dungeon's _skill_damage_mult did not pick up the skill_dmg "
+        "run upgrade")
+
+
+def test_dungeon_skill_cd_upgrade_applies(pygame_headless):
+    """The ``skill_cd`` run upgrade reduces the dungeon's skill cooldowns
+    (same as the road). A dungeon with skill_cd unlocked has shorter
+    cooldowns than the base."""
+    from core.state import GameState
+    from engine.runner import DungeonRunner
+    from engine.skills import SKILL_DEFS
+    state = GameState()
+    state.medals = 100
+    state.upgrades["skill_cd"] = 5
+    dr = DungeonRunner(state)
+    # The skill_cd upgrade reduces the cooldown (capped at 0.5x).
+    assert dr._skill_cooldown_mult() < 1.0, (
+        "the dungeon's _skill_cooldown_mult did not pick up the skill_cd "
+        "run upgrade")
+    # If the kunai skill is unlocked, its cooldown should be reduced.
+    # (The ab_root node is not unlocked by default, so we manually add it
+    # to test the _refresh_skills path.)
+    state.skill_tree.add("ab_root")
+    dr._refresh_skills()
+    if "kunai" in dr.skills:
+        assert dr.skills["kunai"].cooldown < SKILL_DEFS["kunai"]["cooldown"], (
+            "the dungeon's _refresh_skills did not apply the skill_cd "
+            "cooldown reduction")
+
+
+def test_dungeon_combo_window_run_upgrade_applies(pygame_headless):
+    """The ``combo_window`` run upgrade extends the dungeon's combo
+    refresh window (same as the road). A kill in the dungeon with
+    combo_window upgraded sets combo_timer to COMBO_WINDOW + the
+    skill-tree bonus + the run upgrade."""
+    from core.state import GameState
+    from engine.runner import DungeonRunner, COMBO_WINDOW
+    from engine.enemy import spawn_enemy
+    from data.enemies import EnemyDef
+    state = GameState()
+    state.medals = 100
+    state.upgrades["combo_window"] = 5
+    dr = DungeonRunner(state)
+    dr.enter()
+    # Spawn a fragile enemy and kill it through the dungeon's kill path.
+    edef = EnemyDef("e_test", "Test", "bandit", 0, 1.0, 1.0, 1.0, 20, 16,
+                    element="fire")
+    e = spawn_enemy(edef, hp=1.0, dmg=1.0, gold=1.0)
+    dr.world.enemies.append(e)
+    dr._on_enemy_killed(e, combo_m=1.0, gold_m=1.0, evo={})
+    # The combo_timer should be > COMBO_WINDOW (the run upgrade added
+    # extra seconds). With combo_window upgrade level 5, the upgrade
+    # value is > 0 (base_effect * growth^4 * 5), so combo_timer is
+    # strictly greater than the base COMBO_WINDOW.
+    assert state.combo_timer > COMBO_WINDOW, (
+        "the dungeon's _on_enemy_killed did not apply the combo_window "
+        "run upgrade (combo_timer should be > COMBO_WINDOW)")
