@@ -219,6 +219,40 @@ def _heritage_achievements_provider(state: GameState) -> dict[str, float]:
     return {"heritage_pct": n * _HERITAGE_ACHIEVEMENT_BUFF}
 
 
+# Epic Research (Task 18) -- the permanent meta-tree bought with
+# medals/amber. A SEPARATE node set from the elixir skill tree: it reuses
+# the ``SkillNode`` structure but lives in ``state.epic_research`` (a
+# separate set from ``state.skill_tree``) and is bought with the
+# underused currencies medals + amber (NOT elixir). The provider reads
+# ``state.epic_research`` and emits the node effects into the flat bonus
+# dict using the same effect keys the engine already reads
+# (``elixir_pct``, ``away_pct``, ``upgrade_cost_pct``, ...), so the
+# contributions stack additively with the elixir skill tree + pets +
+# tokens + heritage without collision. The keys are the same ones the
+# engine reads; the Epic Research nodes are a separate *source* of the
+# same keys, not a separate set of keys.
+#
+# Away Mastery (``away_pct``) is consumed by ``core.offline.compute``,
+# which CAPS the total offline earnings strictly below active+boosted
+# earnings (see ``core.offline``), so a maxed Away Mastery never makes
+# idling better than playing actively.
+def _epic_research_provider(state: GameState) -> dict[str, float]:
+    """Epic Research nodes: each unlocked node contributes its effect_value.
+
+    Reads ``state.epic_research`` (the set of unlocked Epic Research node
+    ids). Each unlocked node contributes its ``effect_value`` to its
+    ``effect_key`` in the flat bonus dict. The keys are the same effect
+    keys the engine already reads (``elixir_pct``, ``away_pct``,
+    ``upgrade_cost_pct``), so the contributions stack additively with the
+    elixir skill tree's contributions to the same keys.
+    """
+    out: dict[str, float] = {}
+    for n in st.EPIC_RESEARCH_NODES:
+        if n.id in state.epic_research:
+            out[n.effect_key] = out.get(n.effect_key, 0.0) + n.effect_value
+    return out
+
+
 # Register the built-in providers. Order does not matter — contributions
 # are summed additively by key.
 register_provider(_skill_tree_provider)
@@ -228,6 +262,7 @@ register_provider(_dojo_provider)
 register_provider(_heritage_provider)
 register_provider(_tokens_provider)
 register_provider(_heritage_achievements_provider)
+register_provider(_epic_research_provider)
 
 
 def aggregate_bonuses(state: GameState) -> dict[str, float]:

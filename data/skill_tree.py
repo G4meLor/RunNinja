@@ -198,6 +198,51 @@ NODES: list[SkillNode] = _build_tree()
 BY_ID: dict[str, SkillNode] = {n.id: n for n in NODES}
 
 
+# ---------------------------------------------------------------------------
+# Epic Research -- a permanent meta-tree bought with medals/amber (Task 18).
+# ---------------------------------------------------------------------------
+# A SEPARATE set of nodes from the elixir skill tree above. They reuse the
+# ``SkillNode`` structure (same dataclass) but are bought with the
+# underused currencies medals + amber (NOT elixir), and live in
+# ``state.epic_research`` (a separate set from ``state.skill_tree``). The
+# ``_epic_research_provider`` in ``core.bonuses`` reads
+# ``state.epic_research`` and emits the node effects into the flat bonus
+# dict -- the keys are the same effect keys the engine already reads
+# (``elixir_pct``, ``away_pct``, ``upgrade_cost_pct``, ...), so the
+# contributions stack additively with the elixir skill tree without
+# collision.
+#
+# The three nodes from the brief:
+#   * **Elixir Resonance** -- +15% elixir gain (the elixir economy's
+#     permanent amplifier; stacks with the elixir skill tree + Godai
+#     Void + elixir tokens).
+#   * **Away Mastery** -- +25% offline gold (the ``away_pct`` key the
+#     offline computation reads). The offline module CAPS the total
+#     offline earnings strictly below active+boosted earnings (see
+#     ``core.offline``), so Away Mastery keeps offline growth
+#     meaningful but never makes idling better than playing actively.
+#   * **Lab Discipline** -- +10% upgrade_cost_pct (reduces run-upgrade
+#     cost; the same key the turtle pet + the Godai Water element use).
+# Costs are in medals (the primary sink); the node values are tuned so
+# the meta-tree is a long-term medal sink, not a first-purchase rush.
+_EPIC_RESEARCH_ROWS = [
+    ("elixir_resonance", "Elixir Resonance", "epic", 50, None,
+     "elixir_pct", 0.15, "+15% elixir gain on ascension (permanent)."),
+    ("away_mastery", "Away Mastery", "epic", 80, None,
+     "away_pct", 0.25, "+25% offline gold (capped below active earnings)."),
+    ("lab_discipline", "Lab Discipline", "epic", 60, None,
+     "upgrade_cost_pct", 0.10, "-10% run upgrade cost (permanent)."),
+]
+
+
+def _build_epic_research() -> list[SkillNode]:
+    return [SkillNode(*row) for row in _EPIC_RESEARCH_ROWS]
+
+
+EPIC_RESEARCH_NODES: list[SkillNode] = _build_epic_research()
+EPIC_RESEARCH_BY_ID: dict[str, SkillNode] = {n.id: n for n in EPIC_RESEARCH_NODES}
+
+
 def all_nodes() -> list[SkillNode]:
     return list(NODES)
 
