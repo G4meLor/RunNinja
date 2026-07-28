@@ -41,6 +41,7 @@ def ninja_surface(size: int = 64) -> pygame.Surface:
     pygame.draw.line(surf, (20, 20, 30), (cx + 2, cy - 14), (cx + 5, cy - 14), 2)
     pygame.draw.line(surf, (220, 220, 230), (cx - 18, cy - 2), (cx - 6, cy + 18), 3)
     pygame.draw.rect(surf, headband, (cx - 22, cy + 16, 8, 3))
+    surf = surf.convert_alpha()
     _NINJA_CACHE[size] = surf
     return surf
 
@@ -99,6 +100,7 @@ def enemy_surface(edef, size: int = 48) -> pygame.Surface:
         pygame.draw.circle(surf, (255, 200, 60), (cx - r + 4, cy), 2)
     else:
         pygame.draw.circle(surf, base, (cx, cy), r)
+    surf = surf.convert_alpha()
     _ENEMY_CACHE[key] = surf
     return surf
 
@@ -123,6 +125,7 @@ def firefly_surface(size: int = 10, hue: int = 60) -> pygame.Surface:
         s.blit(glow, (cx - r, cx - r))
     pygame.draw.circle(s, col, (cx, cx), size // 2 + 1)
     pygame.draw.circle(s, (255, 255, 255), (cx, cx), max(1, size // 3))
+    s = s.convert_alpha()
     _FIREFLY_CACHE[key] = s
     return s
 
@@ -157,6 +160,7 @@ def building_surface(bid: str, size: int = 48) -> pygame.Surface:
             y = cy - 6 + i * 8
             pygame.draw.rect(surf, wall, (cx - w // 2, y, w, 6))
             pygame.draw.polygon(surf, roof, [(cx - w // 2 - 2, y), (cx + w // 2 + 2, y), (cx, y - 6)])
+    surf = surf.convert_alpha()
     _BUILDING_CACHE[key] = surf
     return surf
 
@@ -178,6 +182,7 @@ def pet_surface(pid: str, hue: int, size: int = 40) -> pygame.Surface:
     pygame.draw.circle(surf, col, (cx + 10, cy - 8), 5)
     pygame.draw.circle(surf, (20, 20, 30), (cx - 5, cy - 2), 2)
     pygame.draw.circle(surf, (20, 20, 30), (cx + 5, cy - 2), 2)
+    surf = surf.convert_alpha()
     _PET_CACHE[key] = surf
     return surf
 
