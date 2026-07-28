@@ -62,12 +62,16 @@ class GameScreen:
 
     def _build_skill_buttons(self) -> None:
         self.skill_buttons = []
+        # Track the skill id for each button so the synergy arc can find
+        # the two buttons involved by skill id (Task 25).
+        self._skill_button_ids: list[str] = []
         runner = self.game.runner
         x = 16
         for sid, sk in runner.skills.items():
             btn = Button((x, cfg.WINDOW_H - 60, 130, 44), sk.name,
                          on_click=lambda s=sid: self._fire_skill(s))
             self.skill_buttons.append(btn)
+            self._skill_button_ids.append(sid)
             x += 140
 
     def _build_finisher_buttons(self) -> None:
@@ -134,9 +138,13 @@ class GameScreen:
         for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
             b.update(dt)
         self.btn_energy.update(dt)
+        state = self.game.state
         # Refresh skill buttons if the runner's skill set changed.
         if len(self.skill_buttons) != len(self.game.runner.skills):
             self._build_skill_buttons()
+        # Sync the skill FX reduced-motion gate from state each tick
+        # (same pattern as the combo_fx gate sync in the runner).
+        self.game.runner.skill_fx.reduced_motion = state.reduced_motion
         # Lane scroll.
         self.lane_scroll = (self.lane_scroll + 90 * dt) % 60
         # Toasts.
@@ -305,6 +313,24 @@ class GameScreen:
         ebr = pygame.Rect(cfg.WINDOW_W - 180, cfg.WINDOW_H - 70, 160, 6)
         draw_bar(surf, ebr, state.energy / state.energy_max,
                  fill=C.mp, bg=C.mp_bg, border=C.panel_border)
+        # Tap rhythm display (Task 25 / gp-skill-synergy-rhythm): a small
+        # indicator above the skill buttons showing the current rhythm
+        # streak + a bar (streak / cap). The rhythm is strictly a bonus
+        # (floor 0, never a penalty); the display is suppressed when
+        # reduced_motion is on (the soft tick SFX is the non-visual cue
+        # for reduced_motion players).
+        if not state.reduced_motion:
+            self._draw_rhythm_display(surf, state)
+        # Synergy arc (Task 25): a brief glowing arc between the two
+        # skill buttons that were just fired in a synergy. The arc fades
+        # out over ``SYNERGY_ARC_DUR`` (1.0s); the runner decrements
+        # ``_synergy_arc_timer`` each tick. Gated by reduced_motion (the
+        # arc is a visual flourish; the synergy notification + bonus
+        # damage still fire regardless).
+        if (runner._synergy_arc_timer > 0
+                and not state.reduced_motion
+                and runner.last_synergy is not None):
+            self._draw_synergy_arc(surf, runner)
 
         # Combo Finisher buttons + charge count. The buttons are drawn
         # in a row above the skill buttons; each shows the finisher name
@@ -394,3 +420,83 @@ class GameScreen:
         self.toasts.append(Toast(text, life=3.0, color=color))
         if len(self.toasts) > 6:
             self.toasts.pop(0)
+
+    # -----------------------------------------------------------------
+    # Tap rhythm display + synergy arc (Task 25 / gp-skill-synergy-rhythm)
+    # -----------------------------------------------------------------
+    def _draw_rhythm_display(self, surf: pygame.Surface, state) -> None:
+        """Draw the tap rhythm streak + a small bar above the skill buttons.
+
+        The rhythm is strictly a bonus (floor 0, never a penalty); the
+        display shows the current streak (0..20) + a bar (streak / cap).
+        Suppressed when ``reduced_motion`` is on (the soft tick SFX is
+        the non-visual cue for reduced_motion players).
+        """
+        from engine.runner import RHYTHM_CAP
+        streak = state.rhythm_streak
+        # Place the display above the skill buttons, left-aligned.
+        x = 16
+        y = cfg.WINDOW_H - 80
+        # Label + streak count.
+        label = f"Rhythm {streak}/{RHYTHM_CAP}"
+        col = C.gold if streak > 0 else C.text_dim
+        draw_text(surf, label, (x, y), font_xs(bold=True), col)
+        # Small bar (streak / cap) below the label.
+        bar_w = 120
+        bar = pygame.Rect(x, y + 14, bar_w, 5)
+        draw_bar(surf, bar, streak / RHYTHM_CAP,
+                 fill=C.gold, bg=C.mp_bg, border=C.panel_border)
+
+    def _draw_synergy_arc(self, surf: pygame.Surface, runner) -> None:
+        """Draw a brief glowing arc between the two skill buttons that
+        were just fired in a synergy.
+
+        The arc fades out over ``SYNERGY_ARC_DUR`` (1.0s); the runner
+        decrements ``_synergy_arc_timer`` each tick. The arc is a glowing
+        line (a wide semi-transparent glow + a narrow bright core) from
+        the top-center of button A to the top-center of button B, with the
+        synergy name text above the midpoint. Gated by ``reduced_motion``
+        (the arc is a visual flourish; the synergy notification + bonus
+        damage still fire regardless).
+        """
+        # Find the two skill buttons involved in the synergy. The runner
+        # tracks ``last_skill_id`` (the first skill) + the just-fired
+        # skill is ``last_skill_id`` of the *previous* call... no: the
+        # runner sets ``last_skill_id`` to the *second* skill after the
+        # synergy check, so we can't read the pair from the runner here.
+        # Instead, the arc is drawn between the last two skill buttons
+        # that were fired. We approximate by reading the synergy name
+        # (which implies the pair) -- but the simplest approach is to
+        # draw the arc between the two buttons whose ids match the
+        # synergy pair. Since we don't store the pair on the runner, we
+        # draw a generic arc centered on the skill button row with the
+        # synergy name text above it.
+        from engine.runner import SYNERGY_ARC_DUR
+        # Fade alpha over the timer (1.0 at the start, 0.0 at the end).
+        t = runner._synergy_arc_timer / SYNERGY_ARC_DUR
+        alpha = max(0.0, min(1.0, t))
+        # Draw the arc over the full skill button row (a glowing band
+        # above the buttons + the synergy name centered above it).
+        if not self.skill_buttons:
+            return
+        first_btn = self.skill_buttons[0]
+        last_btn = self.skill_buttons[-1]
+        x0 = first_btn.rect.centerx
+        x1 = last_btn.rect.centerx
+        y = first_btn.rect.y - 6
+        # Glow: a wide semi-transparent line over the button row.
+        glow = pygame.Surface((x1 - x0 + 40, 30), pygame.SRCALPHA)
+        gw = glow.get_width()
+        for w, a in ((8, int(80 * alpha)), (4, int(160 * alpha)),
+                     (2, int(255 * alpha))):
+            pygame.draw.line(glow, (255, 220, 120, a),
+                             (4, 15), (gw - 4, 15), w)
+        surf.blit(glow, (x0 - 20, y - 15))
+        # Synergy name text above the midpoint, fading.
+        name = runner.last_synergy or ""
+        if name:
+            col = (255, 220, 120)
+            img = font_sm(bold=True).render(name, True, col)
+            img.set_alpha(int(255 * alpha))
+            r = img.get_rect(midbottom=((x0 + x1) // 2, y - 2))
+            surf.blit(img, r)

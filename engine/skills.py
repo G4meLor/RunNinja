@@ -57,3 +57,34 @@ def fire(skill: ActiveSkill) -> None:
     if skill.duration > 0:
         skill.active = True
         skill.duration_timer = skill.duration
+
+
+# ---------------------------------------------------------------------------
+# Skill Synergies (Task 25 / gp-skill-synergy-rhythm)
+# ---------------------------------------------------------------------------
+# Firing two active skills within 2s in a specific order triggers a named
+# synergy bonus. The synergy is a sequencing puzzle on the 4 active skills.
+# The bonus is a flat burst (NOT multiplicative with combo_mult), same
+# philosophy as the finishers and fusion -- a reward for sequencing, not
+# another combo-scaled nuke.
+SYNERGIES: dict[tuple[str, str], str] = {
+    ("kunai", "shuriken"): "Storm of Steel",
+    ("speed", "kunai"):   "Lightning Strike",
+    ("rope", "shuriken"): "Grinding Vortex",
+    ("speed", "rope"):    "Phantom Snare",
+}
+# The window: the second skill must fire within this many seconds of the
+# first. 2s is tight enough to be a deliberate sequencing puzzle, not an
+# accident.
+SYNERGY_WINDOW: float = 2.0
+# The synergy's bonus damage is a flat multiple of tap_damage (capped,
+# NOT multiplicative with combo_mult -- same philosophy as the finishers
+# and fusion). Tuned so a synergy is a meaningful burst but not a
+# replacement for the skills themselves.
+SYNERGY_DMG_MULT: float = 4.0
+
+
+def synergy_for(prev_sid: str, sid: str) -> str | None:
+    """The synergy name for firing ``prev_sid`` then ``sid`` within the
+    window, or None if the pair has no synergy (or is in the wrong order)."""
+    return SYNERGIES.get((prev_sid, sid))

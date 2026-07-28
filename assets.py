@@ -327,6 +327,11 @@ def init_sfx():
         _SFX["skill"] = _make_sweep(300, 900, 0.4, 0.25)
         _SFX["ascend"] = _make_sweep(200, 1200, 1.0, 0.35)
         _SFX["gacha"] = _make_sweep(400, 800, 0.3, 0.25)
+        # Task 25 (gp-skill-synergy-rhythm): a soft, short, high-pitched
+        # tick for the rhythm streak increment -- a non-visual cue for
+        # reduced_motion players (the visual rhythm display is suppressed
+        # when reduced_motion is on; the tick is the alternative cue).
+        _SFX["tick"] = _make_tone(880, 0.03, 0.08, 30)
         _SFX_OK = True
     except Exception:
         _SFX_OK = False
@@ -339,6 +344,12 @@ def play(name, sound_on=True):
     if snd is None:
         return
     try:
+        # Guard against the mixer being quit between init_sfx() and play()
+        # (e.g. a test fixture quits pygame; _SFX_OK stays True but the
+        # mixer is gone, and snd.play() segfaults). The get_init() check
+        # is cheap and prevents the segfault.
+        if not pygame.mixer.get_init():
+            return
         snd.play()
     except Exception:
         pass

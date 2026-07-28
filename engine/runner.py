@@ -19,6 +19,7 @@ from engine.enemy import (Enemy, tick_combat, tap as tap_enemy, nearest_enemy,
                           PARTY_X, spawn_enemy, spawn_boss)
 from engine.firefly import Firefly, update_fireflies, catch_firefly
 from engine.skills import ActiveSkill, make_skill, tick_skill, can_fire, fire as fire_skill
+from engine.skills import SYNERGIES, SYNERGY_WINDOW, SYNERGY_DMG_MULT
 from engine.world import World
 from engine.eventbus import EventBus
 from engine.fx import FXLayer
@@ -102,6 +103,23 @@ FUSION_COOLDOWN: float = 30.0
 # with combo_mult). Tuned so a fusion is a meaningful burst but not a
 # replacement for the auto-attack loop.
 FUSION_DMG_MULT: float = 8.0
+# ---------------------------------------------------------------------------
+# Tap rhythm (Task 25 / gp-skill-synergy-rhythm)
+# ---------------------------------------------------------------------------
+# The median of the last 5 tap intervals in the 0.35-0.55s window builds
+# ``state.rhythm_streak`` (cap 20), +2.5% tap damage per level. Rhythm is
+# strictly a BONUS (floor 0, never a penalty) -- motor-impaired players
+# aren't punished. The rolling tap timestamps are kept here (separate from
+# the fatigue window in ``_tap_timestamps``, which only spans 1.0s; the
+# rhythm window spans up to ~2.5s at 0.5s intervals so the lists diverge).
+RHYTHM_WINDOW_SIZE: int = 5          # taps to keep for rhythm evaluation
+RHYTHM_MIN_INTERVAL: float = 0.35    # seconds; below this = too fast (reset)
+RHYTHM_MAX_INTERVAL: float = 0.55    # seconds; above this = too slow (reset)
+RHYTHM_CAP: int = 20                 # max streak levels
+RHYTHM_BONUS_PER_LEVEL: float = 0.025  # +2.5% tap damage per level
+# The synergy arc display lifetime (seconds). The screen draws a glowing
+# arc between the two skill buttons while this timer is > 0.
+SYNERGY_ARC_DUR: float = 1.0
 # The element node id -> element name (the unlock gate for a fusion pair).
 _GODAI_ELEMENT_NODES: dict[str, str] = {
     "godai_void":  "void",
@@ -164,6 +182,21 @@ class Runner:
         # so a macro that fires 100 taps/s does not trivialize the game;
         # the floor (0.3x) keeps tap meaningful even under heavy fatigue.
         self._tap_timestamps: list[float] = []
+        # Tap rhythm (Task 25 / gp-skill-synergy-rhythm): a rolling list of
+        # the last 5 tap timestamps (epoch seconds) used to compute the
+        # median interval. Separate from ``_tap_timestamps`` (the fatigue
+        # window) because the rhythm window spans up to ~2.5s at 0.5s
+        # intervals while the fatigue window is 1.0s.
+        self._rhythm_taps: list[float] = []
+        # Skill synergies (Task 25 / gp-skill-synergy-rhythm): track the
+        # last skill fired + when, so the next activate_skill can check
+        # whether the pair matches a synergy within the 2s window.
+        # ``last_synergy`` is the name of the last synergy that fired (or
+        # None) -- the UI reads it + ``_synergy_arc_timer`` to draw the arc.
+        self.last_skill_id: str | None = None
+        self.last_skill_time: float = 0.0
+        self.last_synergy: str | None = None
+        self._synergy_arc_timer: float = 0.0
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
@@ -472,6 +505,55 @@ class Runner:
         self._tap_timestamps.append(time.monotonic())
 
     # -----------------------------------------------------------------
+    # Tap rhythm (Task 25 / gp-skill-synergy-rhythm)
+    # -----------------------------------------------------------------
+    def rhythm_mult(self) -> float:
+        """The current tap rhythm multiplier (1.0 = no bonus, 1.5 = max).
+
+        ``1.0 + RHYTHM_BONUS_PER_LEVEL * state.rhythm_streak``. The streak
+        is capped at ``RHYTHM_CAP`` (20) so the max multiplier is 1.5x.
+        Rhythm is strictly a BONUS: the multiplier is always >= 1.0 (floor
+        0, never a penalty) -- motor-impaired players aren't punished.
+        """
+        return 1.0 + RHYTHM_BONUS_PER_LEVEL * self.state.rhythm_streak
+
+    def _record_rhythm_tap(self) -> None:
+        """Record a tap timestamp for the rhythm window + update the streak.
+
+        Keeps the last ``RHYTHM_WINDOW_SIZE`` (5) tap timestamps; computes
+        the median of the intervals between them; if the median is in the
+        0.35-0.55s window, increments ``state.rhythm_streak`` (capped at
+        ``RHYTHM_CAP``); else resets the streak to 0. A soft tick SFX
+        plays when the streak increments (a non-visual cue for
+        ``reduced_motion`` players).
+        """
+        self._rhythm_taps.append(time.monotonic())
+        if len(self._rhythm_taps) > RHYTHM_WINDOW_SIZE:
+            self._rhythm_taps = self._rhythm_taps[-RHYTHM_WINDOW_SIZE:]
+        self._update_rhythm_streak()
+
+    def _update_rhythm_streak(self) -> None:
+        """Evaluate the rhythm window + update ``state.rhythm_streak``.
+
+        Requires ``RHYTHM_WINDOW_SIZE`` (5) taps before judging the rhythm;
+        with fewer taps the streak is unchanged (no bonus, no penalty --
+        the player hasn't established a rhythm yet).
+        """
+        if len(self._rhythm_taps) < RHYTHM_WINDOW_SIZE:
+            return
+        intervals = [self._rhythm_taps[i + 1] - self._rhythm_taps[i]
+                     for i in range(len(self._rhythm_taps) - 1)]
+        median = sorted(intervals)[len(intervals) // 2]
+        if RHYTHM_MIN_INTERVAL <= median <= RHYTHM_MAX_INTERVAL:
+            self.state.rhythm_streak = min(RHYTHM_CAP,
+                                          self.state.rhythm_streak + 1)
+            # Soft tick SFX (a non-visual cue for reduced_motion players).
+            from assets import play
+            play("tick", self.state.sound_on)
+        else:
+            self.state.rhythm_streak = 0
+
+    # -----------------------------------------------------------------
     # Update
     # -----------------------------------------------------------------
     def update(self, dt: float, *, paused: bool = False) -> None:
@@ -541,6 +623,11 @@ class Runner:
         # active fusion when it's ready (30s cooldown). The fusion deals
         # AOE damage to all alive enemies; see ``_tick_fusion``.
         self._tick_fusion(dt)
+        # Synergy arc timer (Task 25): decrement the display timer so the
+        # glowing arc between the skill buttons fades out after
+        # ``SYNERGY_ARC_DUR`` (1.0s).
+        if self._synergy_arc_timer > 0:
+            self._synergy_arc_timer = max(0.0, self._synergy_arc_timer - dt)
 
         # Combo decay (with grace period). ``combo_timer`` is allowed to
         # go negative to -COMBO_GRACE (-1.5s) before the combo fully
@@ -776,7 +863,12 @@ class Runner:
         # Task 24 (gp-tap-auto-rebalance): record this tap for the fatigue
         # window BEFORE computing the multiplier so the count is current.
         self._record_tap()
+        # Task 25 (gp-skill-synergy-rhythm): record this tap for the rhythm
+        # window + update the streak. The rhythm is strictly a bonus (the
+        # multiplier is >= 1.0, floor 0, never a penalty).
+        self._record_rhythm_tap()
         fatigue_m = self.tap_fatigue_mult()
+        rhythm_m = self.rhythm_mult()
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
         evo = aggregate_bonuses(self.state)
@@ -789,13 +881,14 @@ class Runner:
         _saved_crit_chance = self.ninja.crit_chance
         if self._executioner_timer > 0:
             self.ninja.crit_chance = 1.0  # guaranteed crit
-        # Tap fatigue (Task 24): scale the ninja's tap_damage by the
-        # fatigue multiplier for this tap (restored after, same pattern
-        # as the crit_chance override above). The fatigue multiplier is
-        # 1.0 at/below 5 taps/s and floors at 0.3x so tapping never
-        # becomes useless.
+        # Tap fatigue (Task 24) + rhythm (Task 25): scale the ninja's
+        # tap_damage by the fatigue multiplier (a penalty above 5 taps/s,
+        # floored at 0.3x) AND the rhythm multiplier (a bonus, >= 1.0)
+        # for this tap (restored after, same pattern as the crit_chance
+        # override above). The rhythm multiplier is always >= 1.0 so it
+        # never makes the tap worse -- it only adds on top of the fatigue.
         _saved_tap_damage = self.ninja.tap_damage
-        self.ninja.tap_damage = self.ninja.tap_damage * fatigue_m
+        self.ninja.tap_damage = self.ninja.tap_damage * fatigue_m * rhythm_m
         # Snapshot the target's HP before the tap so we can detect the
         # massive overkill (the cleave trigger condition). The cleave
         # fires when the tap damage exceeds the enemy's remaining HP by
@@ -913,6 +1006,13 @@ class Runner:
         dealt by all damage skills (kunai/shuriken). The multiplier is
         applied on top of the existing tap/auto * combo stack so it
         composes cleanly. The upgrade resets on ascension.
+
+        Task 25 (gp-skill-synergy-rhythm): firing two active skills
+        within ``SYNERGY_WINDOW`` (2s) in a specific order triggers a
+        named synergy bonus (a sequencing puzzle on the 4 active skills).
+        The synergy is a flat burst (NOT multiplicative with combo_mult),
+        same philosophy as the finishers and fusion. The synergy is a
+        BONUS -- it only adds damage, never a penalty.
         """
         sk = self.skills.get(sid)
         if sk is None or not can_fire(sk):
@@ -958,9 +1058,47 @@ class Runner:
         elif sid == "speed":
             # Speed Step: a short burst of auto-katana-like attack speed.
             # We model it by briefly engaging the auto-attack boost.
+            # NOTE: the Speed Step kill-ramp-with-decay rework is NOT
+            # implemented (it punishes idle). The speed skill is a simple
+            # energy burst, not a ramp that decays on no-kills.
             self.state.energy_active = True
             self.state.energy = max(self.state.energy, 8.0)
             self.notify("Speed Step!", (255, 240, 120))
+        # Skill Synergies (Task 25): check whether the previous skill
+        # fired within the 2s window matches a synergy pair. The synergy
+        # is a sequencing puzzle -- the player fires two skills in a
+        # specific order within the window. The bonus is a flat burst
+        # (NOT multiplicative with combo_mult), applied on top of the
+        # second skill's effect. The synergy is a BONUS -- it only adds
+        # damage, never a penalty.
+        now = time.monotonic()
+        if (self.last_skill_id is not None
+                and now - self.last_skill_time <= SYNERGY_WINDOW
+                and (self.last_skill_id, sid) in SYNERGIES):
+            self.last_synergy = SYNERGIES[(self.last_skill_id, sid)]
+            self._synergy_arc_timer = SYNERGY_ARC_DUR
+            # Apply the synergy bonus: a flat burst of AOE damage to all
+            # alive enemies (a flat multiple of tap_damage, NOT
+            # multiplicative with combo_mult -- same philosophy as the
+            # finishers and fusion). The elemental multiplier still
+            # applies (the synergy respects the type chart).
+            from engine.enemy import _apply_damage
+            evo = aggregate_bonuses(self.state)
+            dmg = self.ninja.tap_damage * SYNERGY_DMG_MULT
+            for t in list(self.world.enemies):
+                if t.alive:
+                    _apply_damage(t, dmg, is_crit=True,
+                                  attuned=self.state.attuned_element)
+                    if not t.alive:
+                        self._on_enemy_killed(t, combo_m, gold_m, evo)
+            # Skill VFX for the synergy (reuse the skill-FX burst).
+            self.skill_fx.trigger("shuriken", self.ninja.x, self.ninja.y,
+                                  self.world.enemies)
+            self.notify(f"Synergy: {self.last_synergy}!", (255, 220, 120))
+        # Track this skill for the next synergy check (regardless of
+        # whether a synergy fired -- the next skill pairs with this one).
+        self.last_skill_id = sid
+        self.last_skill_time = now
 
     def toggle_energy(self) -> None:
         if self.state.energy_active:
@@ -1086,6 +1224,15 @@ class Runner:
         # Reset the tap fatigue window on ascension (transient — the
         # rolling tap timestamps clear so the new run starts fresh).
         self._tap_timestamps = []
+        # Reset the synergy tracking + rhythm streak on ascension
+        # (transient — the new run starts fresh; rhythm_streak is on
+        # state so it persists across saves but resets on the prestige).
+        self.last_skill_id = None
+        self.last_skill_time = 0.0
+        self.last_synergy = None
+        self._synergy_arc_timer = 0.0
+        self._rhythm_taps = []
+        self.state.rhythm_streak = 0
         # Clear all FX.
         self.fx.texts.clear()
         self.death_fx.fx.clear()
