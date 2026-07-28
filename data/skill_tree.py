@@ -155,6 +155,17 @@ _EXTRA_NODES = [
      "godai_fire", 0.15, "+15% coin gold value."),
     ("godai_water", "Element of Water", "godai", 300, "godai_gate",
      "godai_water", 0.15, "+15% hero power."),
+    # Auto-attune toggle (Task 21 / gp-godai-fusion): when unlocked, the
+    # runner automatically picks the element that beats the current zone's
+    # dominant enemy element (2x advantage) each tick, so idle players get
+    # the 2x bonus without micromanaging attunement. WITHOUT this node,
+    # ``state.attuned_element`` stays "none" (1x) — idle is never worse
+    # than 1x. The node is the COMPLEMENT to the 4 element nodes (the
+    # unlock gate for the fusion layer), NOT a competing system: the
+    # element nodes still grant their flat +15% stat boosts; the auto-
+    # attune + fusion layer on top.
+    ("godai_auto_attune", "Auto Attunement", "godai", 500, "godai_gate",
+     "auto_attune", 1.0, "Auto-pick the best element for the current zone (idle 2x)."),
 ]
 
 

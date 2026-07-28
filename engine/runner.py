@@ -70,6 +70,52 @@ FINISHERS: dict[str, tuple[str, int, str]] = {
     "executioner_edge": ("Executioner's Edge", 1, "crit_buff"),
 }
 
+# ---------------------------------------------------------------------------
+# Godai fusion (Task 21 / gp-godai-fusion)
+# ---------------------------------------------------------------------------
+# 4 dual-element fusion effects on a 30s cooldown. A fusion fires when both
+# elements of a pair are unlocked (in ``state.skill_tree``) AND the
+# attuned element matches one of the pair. The fusion deals a burst of
+# AOE damage to all alive enemies (a flat multiple of ``tap_damage``,
+# NOT multiplicative with ``combo_mult`` — same cap philosophy as the
+# finishers). The fusion is the single elemental combat system (the
+# zone-environmental-hazards proposal is NOT implemented).
+#
+# The 4 fusions from the brief (each is a distinct pair):
+#   void + fire  -> "inferno"  (the burning void)
+#   wind + water -> "tempest"  (the storm)
+#   fire + water -> "steam"    (the scalding burst)
+#   void + wind  -> "vacuum"   (the suffocating pull)
+FUSIONS: dict[tuple[str, str], str] = {
+    ("void", "fire"):  "inferno",
+    ("wind", "water"): "tempest",
+    ("fire", "water"): "steam",
+    ("void", "wind"):  "vacuum",
+}
+# The fusion fires on a 30s cooldown. ``_fusion_timer`` counts down; when
+# it hits 0 the fusion fires (if a pair is unlocked + the attuned element
+# matches) and the timer resets to the cooldown.
+FUSION_COOLDOWN: float = 30.0
+# Fusion damage = tap_damage * FUSION_DMG_MULT (capped, NOT multiplicative
+# with combo_mult). Tuned so a fusion is a meaningful burst but not a
+# replacement for the auto-attack loop.
+FUSION_DMG_MULT: float = 8.0
+# The element node id -> element name (the unlock gate for a fusion pair).
+_GODAI_ELEMENT_NODES: dict[str, str] = {
+    "godai_void":  "void",
+    "godai_wind":  "wind",
+    "godai_fire":  "fire",
+    "godai_water": "water",
+}
+# The 4-cycle: each element is 2x strong against the next in the cycle.
+# Used by ``auto_attune_element`` to pick the best element for a zone.
+_ELEMENT_ADVANTAGE: dict[str, str] = {
+    "void":  "wind",   # void 2x vs wind
+    "wind":  "fire",   # wind 2x vs fire
+    "fire":  "water",  # fire 2x vs water
+    "water": "void",   # water 2x vs void
+}
+
 
 class Runner:
     def __init__(self, state: GameState) -> None:
@@ -102,6 +148,12 @@ class Runner:
         # makes every tap/auto-attack a guaranteed crit. Decremented in
         # ``update``. See ``activate_finisher("executioner_edge")``.
         self._executioner_timer: float = 0.0
+        # Godai fusion timer (Task 21): counts down from FUSION_COOLDOWN;
+        # when it hits 0 the fusion fires (if a pair is unlocked + the
+        # attuned element matches) and the timer resets. Starts at 0 so
+        # the first fusion fires as soon as the conditions are met (no
+        # 30s wait on a fresh run).
+        self._fusion_timer: float = 0.0
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
@@ -182,6 +234,106 @@ class Runner:
         # total multiplier is structurally capped at COMBO_MULT_CAP.
         return 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-c / tau))
 
+    # -----------------------------------------------------------------
+    # Godai attunement + fusion (Task 21 / gp-godai-fusion)
+    # -----------------------------------------------------------------
+    def auto_attune_element(self) -> str:
+        """The best Godai element to attune for the current zone.
+
+        Returns the element that is 2x strong against the current zone's
+        dominant enemy element (the 4-cycle). Returns "none" when:
+          * the ``godai_auto_attune`` node is NOT unlocked (the idle floor
+            — no automatic attunement; the player can still set
+            ``state.attuned_element`` manually if they want), or
+          * the zone's enemies are all "none" (no element to beat), or
+          * no element is 2x against the zone's dominant element.
+
+        The pick is the COMPLEMENT to the 4 element nodes (the unlock
+        gate for the fusion layer), NOT a competing system: the element
+        nodes still grant their flat +15% stat boosts; the auto-attune
+        layer on top.
+        """
+        if "godai_auto_attune" not in self.state.skill_tree:
+            return "none"
+        # Find the dominant enemy element in the current zone (the most
+        # common non-"none" element among the zone's enemies). If all
+        # enemies are "none", there's nothing to beat -> "none".
+        from data.enemies import zone_by_index
+        zone = zone_by_index(self.state.zone_index)
+        counts: dict[str, int] = {}
+        for e in zone["enemies"]:
+            if e.element != "none":
+                counts[e.element] = counts.get(e.element, 0) + 1
+        if not counts:
+            return "none"
+        dominant = max(counts, key=counts.get)
+        # Pick the element that is 2x against the dominant element (the
+        # reverse of the 4-cycle: if dominant is "fire", the element 2x
+        # against fire is "water" — water > fire in the cycle).
+        for attacker, defender in _ELEMENT_ADVANTAGE.items():
+            if defender == dominant:
+                return attacker
+        return "none"
+
+    def _unlocked_elements(self) -> set[str]:
+        """The set of Godai elements unlocked in the skill tree."""
+        return {name for nid, name in _GODAI_ELEMENT_NODES.items()
+                if nid in self.state.skill_tree}
+
+    def _active_fusion(self) -> str | None:
+        """The fusion to fire this tick, or None.
+
+        A fusion fires when both elements of a pair are unlocked (in
+        ``state.skill_tree``). The attuned element does NOT need to match
+        the pair — the fusion is a reward for unlocking both elements; the
+        attuned element affects the damage via ``element_mult`` (the
+        fusion respects the type chart). Returns the fusion name (e.g.
+        "inferno") or None if no pair is fully unlocked.
+        """
+        unlocked = self._unlocked_elements()
+        for (a, b), name in FUSIONS.items():
+            if a in unlocked and b in unlocked:
+                return name
+        return None
+
+    def _tick_fusion(self, dt: float) -> None:
+        """Advance the fusion timer and fire the fusion when it's ready.
+
+        Called from ``update`` once per tick. Decrements ``_fusion_timer``
+        by ``dt``; when it hits 0, fires the active fusion (if any) and
+        resets the timer to ``FUSION_COOLDOWN``. The fusion deals a burst
+        of AOE damage to all alive enemies (a flat multiple of
+        ``tap_damage``, NOT multiplicative with ``combo_mult``).
+        """
+        self._fusion_timer -= dt
+        if self._fusion_timer > 0:
+            return
+        # Timer expired: reset and try to fire.
+        self._fusion_timer = FUSION_COOLDOWN
+        fusion = self._active_fusion()
+        if fusion is None:
+            return
+        # Fire the fusion: AOE damage to all alive enemies. The damage is
+        # a flat multiple of ``tap_damage`` (capped, NOT multiplicative
+        # with combo_mult — same philosophy as the finishers). The
+        # elemental multiplier still applies (the fusion respects the
+        # type chart), so a fusion vs a 2x-advantaged enemy deals 2x.
+        from engine.enemy import _apply_damage
+        dmg = self.ninja.tap_damage * FUSION_DMG_MULT
+        combo_m = self.combo_mult()
+        gold_m = self.gold_mult()
+        evo = aggregate_bonuses(self.state)
+        for t in list(self.world.enemies):
+            if t.alive:
+                _apply_damage(t, dmg, is_crit=True,
+                              attuned=self.state.attuned_element)
+                if not t.alive:
+                    self._on_enemy_killed(t, combo_m, gold_m, evo)
+        # Skill VFX for the fusion (reuse the skill-FX burst).
+        self.skill_fx.trigger("shuriken", self.ninja.x, self.ninja.y,
+                              self.world.enemies)
+        self.notify(f"Godai Fusion: {fusion}!", (255, 180, 90))
+
     def gold_mult(self) -> float:
         evo = aggregate_bonuses(self.state)
         return (1.0 + evo.get("gold_pct", 0.0) + evo.get("godai_fire", 0.0)
@@ -239,6 +391,13 @@ class Runner:
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
         auto_active = self.state.energy_active
+        # Godai auto-attune (Task 21): if the auto-attune node is unlocked,
+        # set ``state.attuned_element`` to the best element for the current
+        # zone each tick (the 2x-advantage pick). Without the node, the
+        # attuned element stays whatever the player set (default "none" =
+        # 1x — idle is never worse than 1x).
+        if "godai_auto_attune" in self.state.skill_tree:
+            self.state.attuned_element = self.auto_attune_element()
         # Executioner's Edge finisher: while the timer is > 0, every tap
         # and auto-attack is a guaranteed crit. We model this by briefly
         # maxing the ninja's crit_chance for the duration of the combat
@@ -253,7 +412,8 @@ class Runner:
 
         tick_combat(self.ninja, self.world.enemies, dt,
                     combo_mult=combo_m, gold_mult=gold_m,
-                    auto_active=auto_active, on_kill=on_kill)
+                    auto_active=auto_active, on_kill=on_kill,
+                    attuned=self.state.attuned_element)
 
         # Restore the ninja's real crit_chance (the Executioner's Edge
         # override was only for this tick).
@@ -271,6 +431,11 @@ class Runner:
         # applied for this whole tick).
         if self._executioner_timer > 0:
             self._executioner_timer = max(0.0, self._executioner_timer - dt)
+
+        # Godai fusion (Task 21): advance the fusion timer and fire the
+        # active fusion when it's ready (30s cooldown). The fusion deals
+        # AOE damage to all alive enemies; see ``_tick_fusion``.
+        self._tick_fusion(dt)
 
         # Combo decay (with grace period). ``combo_timer`` is allowed to
         # go negative to -COMBO_GRACE (-1.5s) before the combo fully
@@ -523,7 +688,8 @@ class Runner:
         target, dmg_dealt, _is_crit = tap_enemy(
             self.ninja, self.world.enemies,
             combo_mult=combo_m, gold_mult=gold_m,
-            on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo))
+            on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo),
+            attuned=self.state.attuned_element)
         # Restore the ninja's real crit_chance (the override was only
         # for this tap).
         self.ninja.crit_chance = _saved_crit_chance
@@ -630,7 +796,8 @@ class Runner:
             for t in targets:
                 from engine.enemy import _apply_damage
                 dmg = self.ninja.tap_damage * 3 * combo_m
-                _apply_damage(t, dmg, is_crit=True)
+                _apply_damage(t, dmg, is_crit=True,
+                              attuned=self.state.attuned_element)
                 if not t.alive:
                     self._on_enemy_killed(t, combo_m, gold_m, aggregate_bonuses(self.state))
             self.notify("Kunai Barrage!", (255, 120, 110))
@@ -640,7 +807,8 @@ class Runner:
             for t in self.world.enemies:
                 if t.alive:
                     dmg = self.ninja.auto_damage * 2 * combo_m
-                    _apply_damage(t, dmg)
+                    _apply_damage(t, dmg,
+                                  attuned=self.state.attuned_element)
                     if not t.alive:
                         self._on_enemy_killed(t, combo_m, gold_m, aggregate_bonuses(self.state))
             self.notify("Shuriken Vortex!", (180, 130, 255))
@@ -705,7 +873,8 @@ class Runner:
             from engine.enemy import _apply_damage
             for t in list(self.world.enemies):
                 if t.alive:
-                    _apply_damage(t, dmg, is_crit=True)
+                    _apply_damage(t, dmg, is_crit=True,
+                                  attuned=self.state.attuned_element)
                     if not t.alive:
                         self._on_enemy_killed(t, combo_m, gold_m, evo)
             # Skill VFX for the finisher (reuse the skill-FX burst).
@@ -773,6 +942,13 @@ class Runner:
         self.state.combo_charges = 0
         self.state.combo_timer = 0.0
         self._executioner_timer = 0.0
+        # Reset the Godai fusion timer on ascension (transient — starts at
+        # 0 so the first fusion fires as soon as the conditions are met on
+        # the new run). ``attuned_element`` is NOT reset here — the
+        # auto-attune node (if unlocked) re-picks it on the next
+        # ``update`` tick, and a manual attunement persists across the
+        # ascension (the player's choice is sticky).
+        self._fusion_timer = 0.0
         # Clear all FX.
         self.fx.texts.clear()
         self.death_fx.fx.clear()

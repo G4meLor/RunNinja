@@ -181,6 +181,9 @@ class GodaiScreen:
         draw_text(surf, f"Gate: {gate_status}",
                   (cfg.WINDOW_W - 200, 100), font_sm(bold=True), gate_col)
 
+        # ----- Attunement panel (Task 21) -----
+        self._draw_attunement(surf, state, godai_unlocked)
+
         # ----- The diagram -----
         self._draw_diagram(surf, state, evo, godai_unlocked)
 
@@ -190,6 +193,61 @@ class GodaiScreen:
         # Buttons.
         for b in self.buttons:
             b.draw(surf)
+
+    # -----------------------------------------------------------------
+    # Attunement panel (Task 21 / gp-godai-fusion)
+    # -----------------------------------------------------------------
+    # The attunement UI shows the player's current attuned element, the
+    # auto-attune toggle state, and the fusion readiness. It is a
+    # read-only display — the attunement is set by the runner (auto-attune
+    # or manual via the skill tree), NOT by clicking here. The panel sits
+    # below the gate status so it doesn't overlap the diagram.
+    _ATTUNE_RECT = pygame.Rect(16, 130, 740, 120)
+
+    def _draw_attunement(self, surf: pygame.Surface, state, godai_unlocked: bool) -> None:
+        r = _ATTUNE_RECT
+        draw_panel(surf, r, fill=C.panel, border=C.panel_border, border_w=1)
+        # Header.
+        draw_text(surf, "Attunement", (r.x + 16, r.y + 12),
+                 font_md(bold=True), st.branch_color("godai"))
+        # Current attuned element.
+        attuned = state.attuned_element
+        attuned_label = attuned.capitalize() if attuned != "none" else "None (1x)"
+        attuned_col = (C.text_good if attuned != "none"
+                       else C.text_muted)
+        draw_text(surf, f"Attuned: {attuned_label}",
+                 (r.x + 16, r.y + 40), font_sm(bold=True), attuned_col)
+        # Auto-attune toggle state (the skill-tree node).
+        auto_on = "godai_auto_attune" in state.skill_tree
+        auto_label = "Auto-attune: ON" if auto_on else "Auto-attune: OFF"
+        auto_col = C.text_good if auto_on else C.text_muted
+        draw_text(surf, auto_label, (r.x + 16, r.y + 62),
+                 font_sm(), auto_col)
+        # Idle floor hint — the system is optional, idle is never worse
+        # than 1x. Only show when auto-attune is OFF so the player knows
+        # the system is optional.
+        if not auto_on:
+            draw_text(surf, "Idle is never worse than 1x (attuned: None).",
+                     (r.x + 16, r.y + 84), font_xs(), C.text_dim)
+        # Fusion readiness: which fusion (if any) is armed. Read from the
+        # runner if it's available (the runner owns the fusion timer +
+        # active-fusion logic); fall back to a static label otherwise.
+        runner = getattr(self.game, "runner", None)
+        fusion_txt = "Fusion: —"
+        fusion_col = C.text_muted
+        if runner is not None and godai_unlocked:
+            fusion = runner._active_fusion()
+            if fusion is not None:
+                # The fusion is armed (both elements of a pair unlocked).
+                # Show the fusion name + the cooldown timer.
+                timer = max(0.0, runner._fusion_timer)
+                fusion_txt = f"Fusion: {fusion.capitalize()} ({timer:.0f}s)"
+                fusion_col = (255, 180, 90) if timer > 0.5 else (255, 220, 120)
+            else:
+                fusion_txt = "Fusion: needs both elements of a pair"
+                fusion_col = C.text_dim
+        draw_text(surf, fusion_txt, (r.x + 16, r.y + 102),
+                 font_xs(bold=True), fusion_col)
 
     # -----------------------------------------------------------------
     # Diagram (gate + 4 elements + connecting lines)

@@ -21,6 +21,42 @@ ENEMY_START_X = 1300
 ENEMY_ATTACK_RANGE = 230
 
 
+# ---------------------------------------------------------------------------
+# Godai elemental type chart (Task 21 / gp-godai-fusion)
+# ---------------------------------------------------------------------------
+# A 4-cycle type chart: void > wind > fire > water > void. Each element is
+# 2x strong against the next in the cycle and 0.5x weak against the
+# previous. "none" (the default attunement) is 1x against everything so the
+# system is OPTIONAL — idle players are never worse than 1x. The chart is
+# read by ``element_mult(attuned, enemy_element)`` and applied in
+# ``_apply_damage`` (``dmg *= element_mult(state.attuned_element, enemy.element)``).
+#
+# The 4-cycle (clockwise): each attacker is 2x vs the next, 0.5x vs the
+# previous, 1x vs itself and "none".
+#   void  -> wind 2x, fire 1x, water 0.5x, void 1x, none 1x
+#   wind  -> fire 2x, water 1x, void 0.5x, wind 1x, none 1x
+#   fire  -> water 2x, void 1x, wind 0.5x, fire 1x, none 1x
+#   water -> void 2x, wind 1x, fire 0.5x, water 1x, none 1x
+_TYPE_CHART: dict[str, dict[str, float]] = {
+    "void":  {"wind": 2.0, "fire": 1.0, "water": 0.5, "void": 1.0, "none": 1.0},
+    "wind":  {"fire": 2.0, "water": 1.0, "void": 0.5, "wind": 1.0, "none": 1.0},
+    "fire":  {"water": 2.0, "void": 1.0, "wind": 0.5, "fire": 1.0, "none": 1.0},
+    "water": {"void": 2.0, "wind": 1.0, "fire": 0.5, "water": 1.0, "none": 1.0},
+    "none":  {k: 1.0 for k in ("void", "wind", "fire", "water", "none")},
+}
+
+
+def element_mult(attuned: str, enemy_element: str) -> float:
+    """The elemental damage multiplier for ``attuned`` vs ``enemy_element``.
+
+    Returns 2.0 for advantage (the 4-cycle), 0.5 for disadvantage, 1.0 for
+    neutral / same / "none". ``attuned == "none"`` (the default) returns
+    1.0 for every enemy element so the system is OPTIONAL — idle players
+    are never worse than 1x. Unknown elements fall back to 1.0 (no crash).
+    """
+    return _TYPE_CHART.get(attuned, {}).get(enemy_element, 1.0)
+
+
 @dataclass
 class Enemy:
     edef: object
@@ -63,19 +99,28 @@ class Enemy:
     # advance, bosses_killed++, bestiary/achievement reveals) — only the
     # zone bar ALSO jumps. Transient — no state is kept on GameState.
     is_yokai_portal: bool = False
+    # Godai elemental affinity (Task 21 / gp-godai-fusion). Copied from
+    # the EnemyDef at spawn time so the type chart can read it without
+    # reaching back through ``edef`` (the edef is kept for the bestiary
+    # reveal path). One of "none", "void", "wind", "fire", "water".
+    # "none" means the type chart is a no-op for this enemy (1x vs any
+    # attunement). Transient — lives on the Enemy, not GameState.
+    element: str = "none"
 
 
 def spawn_enemy(edef, *, hp: float, dmg: float, gold: float) -> Enemy:
     return Enemy(edef=edef, name=edef.name, shape=edef.shape, hue=edef.hue,
                  hp=hp, max_hp=hp, dmg=dmg, gold=gold,
-                 speed=edef.speed, size=edef.size, rare_drop=edef.rare_drop)
+                 speed=edef.speed, size=edef.size, rare_drop=edef.rare_drop,
+                 element=getattr(edef, "element", "none"))
 
 
 def spawn_boss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
     return Enemy(edef=bdef, name=bdef.name, shape=bdef.shape, hue=bdef.hue,
                  hp=hp, max_hp=hp, dmg=dmg, gold=gold,
                  speed=bdef.speed * 0.6, size=bdef.size, rare_drop=bdef.rare_drop,
-                 is_boss=True)
+                 is_boss=True,
+                 element=getattr(bdef, "element", "none"))
 
 
 def spawn_miniboss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
@@ -91,7 +136,8 @@ def spawn_miniboss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
                  hp=hp, max_hp=hp, dmg=dmg, gold=gold,
                  speed=bdef.speed * 0.6, size=bdef.size,
                  rare_drop=bdef.rare_drop,
-                 is_boss=False, is_miniboss=True)
+                 is_boss=False, is_miniboss=True,
+                 element=getattr(bdef, "element", "none"))
 
 
 def nearest_enemy(enemies: list[Enemy]) -> Optional[Enemy]:
@@ -185,7 +231,14 @@ def _update_boss_phase(boss: Enemy) -> int:
     return new_phase
 
 
-def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False) -> None:
+def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False,
+                  attuned: str = "none") -> None:
+    # Godai elemental multiplier (Task 21): multiply the incoming damage
+    # by ``element_mult(attuned, enemy.element)``. ``attuned`` defaults to
+    # "none" (1x) so callers that don't pass it get the idle floor — the
+    # system is OPTIONAL. The runner passes ``state.attuned_element`` so
+    # the live combat tick uses the player's attunement.
+    amount *= element_mult(attuned, enemy.element)
     # Boss shield at phase 3: damage goes to the shield first, then HP.
     # The shield is a flat HP buffer that sustained auto-attack DPS breaks
     # through; it does NOT regenerate, so once it's depleted the boss takes
@@ -213,7 +266,7 @@ def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False) -> None
 
 
 def tap(ninja, enemies: list[Enemy], *, combo_mult: float, gold_mult: float,
-        on_kill=None) -> tuple[Optional[Enemy], float, bool]:
+        on_kill=None, attuned: str = "none") -> tuple[Optional[Enemy], float, bool]:
     """The player taps — deal tap_damage to the nearest enemy.
 
     Returns ``(target, dmg_dealt, is_crit)``: the tapped enemy (or None
@@ -223,13 +276,17 @@ def tap(ninja, enemies: list[Enemy], *, combo_mult: float, gold_mult: float,
     tap was a crit. The caller (``Runner.tap``) uses ``dmg_dealt`` for
     the Cleave overkill condition so the cleave fires based on the
     ACTUAL damage dealt, not a separate roll.
+
+    ``attuned`` is the player's current Godai attunement (default "none"
+    = 1x); it flows into ``_apply_damage`` so the tap respects the type
+    chart.
     """
     target = nearest_enemy(enemies)
     if target is None:
         return None, 0.0, False
     mult, is_crit = ninja.roll_crit()
     dmg = ninja.tap_damage * mult * combo_mult
-    _apply_damage(target, dmg, is_crit=is_crit)
+    _apply_damage(target, dmg, is_crit=is_crit, attuned=attuned)
     ninja.slash_anim = 0.15
     if not target.alive and on_kill is not None:
         on_kill(target)
@@ -238,8 +295,14 @@ def tap(ninja, enemies: list[Enemy], *, combo_mult: float, gold_mult: float,
 
 def tick_combat(ninja, enemies: list[Enemy], dt: float, *,
                 combo_mult: float, gold_mult: float,
-                auto_active: bool, on_kill=None) -> None:
-    """Advance one combat tick."""
+                auto_active: bool, on_kill=None,
+                attuned: str = "none") -> None:
+    """Advance one combat tick.
+
+    ``attuned`` is the player's current Godai attunement (default "none"
+    = 1x); it flows into ``_apply_damage`` so every auto-attack respects
+    the type chart.
+    """
     # Enemies move + attack.
     for e in enemies:
         if e.flash > 0:
@@ -288,6 +351,6 @@ def tick_combat(ninja, enemies: list[Enemy], dt: float, *,
             if target is not None:
                 mult, is_crit = ninja.roll_crit()
                 dmg = ninja.auto_damage * mult * combo_mult
-                _apply_damage(target, dmg, is_crit=is_crit)
+                _apply_damage(target, dmg, is_crit=is_crit, attuned=attuned)
                 if not target.alive and on_kill is not None:
                     on_kill(target)
