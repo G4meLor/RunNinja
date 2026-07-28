@@ -29,6 +29,13 @@ class EnemyDef:
     # EnemyDef — so it composes with Task 12 (cycle) + Task 31 (weather
     # key on the ZONES dict) without collision.
     element: str = "none"
+    # Lore / Bestiary Codex (Task 26 / cnt-quest-codex): a short lore
+    # entry per enemy, shown in the bestiary screen. Pure DATA -- no new
+    # mechanic, no stat, no state. The lore is a one-line in-fiction
+    # description of the enemy's place in the world (the ninja road's
+    # bestiary). Default "" so existing callers that don't set it are
+    # unaffected; the bestiary screen shows the lore only when non-empty.
+    lore: str = ""
 
 
 ZONES: list[dict] = [
@@ -38,18 +45,24 @@ ZONES: list[dict] = [
         # never sees a damage penalty before they unlock the Godai gate.
         "id": "village", "name": "Hidden Village", "hue": 90,
         "enemies": [
-            EnemyDef("e_bandit", "Bandit", "bandit", 0, 0.8, 0.7, 1.0, 20, 16),
-            EnemyDef("e_rat", "Rat", "beast", 30, 0.6, 0.6, 1.1, 30, 13),
-            EnemyDef("e_thief", "Thief", "bandit", 200, 0.7, 0.8, 1.0, 24, 15, rare_drop=0.02),
+            EnemyDef("e_bandit", "Bandit", "bandit", 0, 0.8, 0.7, 1.0, 20, 16,
+                     lore="A common thug who preys on travellers leaving the village."),
+            EnemyDef("e_rat", "Rat", "beast", 30, 0.6, 0.6, 1.1, 30, 13,
+                     lore="Disease-carrying vermin that swarm the village grain stores."),
+            EnemyDef("e_thief", "Thief", "bandit", 200, 0.7, 0.8, 1.0, 24, 15, rare_drop=0.02,
+                     lore="A quick-fingered pickpocket who steals coin purses in the night."),
         ],
     },
     {
         # Zone 1: the bamboo forest — wind-themed (the swaying grove).
         "id": "bamboo", "name": "Bamboo Forest", "hue": 120,
         "enemies": [
-            EnemyDef("e_ronin", "Ronin", "bandit", 0, 1.0, 1.0, 1.0, 22, 18, element="wind"),
-            EnemyDef("e_wolf", "Wolf", "beast", 0, 0.9, 1.1, 1.0, 34, 17, rare_drop=0.03, element="wind"),
-            EnemyDef("e_spider", "Spider", "beast", 300, 0.8, 0.9, 1.2, 26, 15, element="wind"),
+            EnemyDef("e_ronin", "Ronin", "bandit", 0, 1.0, 1.0, 1.0, 22, 18, element="wind",
+                     lore="A masterless samurai who wanders the grove, seeking a new lord."),
+            EnemyDef("e_wolf", "Wolf", "beast", 0, 0.9, 1.1, 1.0, 34, 17, rare_drop=0.03, element="wind",
+                     lore="A pack hunter that stalks the bamboo paths at dusk."),
+            EnemyDef("e_spider", "Spider", "beast", 300, 0.8, 0.9, 1.2, 26, 15, element="wind",
+                     lore="A web-spinner that snares the careless in silken traps."),
         ],
     },
     {
@@ -57,63 +70,84 @@ ZONES: list[dict] = [
         # swarm and the cave drafts are wind-flavored.
         "id": "cave", "name": "Cave of Echoes", "hue": 220,
         "enemies": [
-            EnemyDef("e_bat", "Cave Bat", "beast", 280, 0.7, 0.8, 1.3, 30, 14, element="wind"),
-            EnemyDef("e_skeleton", "Skeleton", "skeleton", 0, 1.1, 1.0, 1.1, 24, 18, rare_drop=0.04, element="wind"),
-            EnemyDef("e_golem", "Stone Golem", "golem", 30, 2.0, 1.4, 1.5, 14, 24, element="wind"),
+            EnemyDef("e_bat", "Cave Bat", "beast", 280, 0.7, 0.8, 1.3, 30, 14, element="wind",
+                     lore="A swarm-dweller that rides the cave drafts and drinks blood."),
+            EnemyDef("e_skeleton", "Skeleton", "skeleton", 0, 1.1, 1.0, 1.1, 24, 18, rare_drop=0.04, element="wind",
+                     lore="The remains of a fallen warrior, risen by the cave's whispers."),
+            EnemyDef("e_golem", "Stone Golem", "golem", 30, 2.0, 1.4, 1.5, 14, 24, element="wind",
+                     lore="A guardian of carved stone, slow but unyielding in the dark."),
         ],
     },
     {
         # Zone 3: the yokai marsh — water-themed (the flooded bog).
         "id": "marsh", "name": "Yokai Marsh", "hue": 160,
         "enemies": [
-            EnemyDef("e_yokai", "Yokai", "yokai", 270, 1.2, 1.3, 1.4, 26, 18, rare_drop=0.05, element="water"),
-            EnemyDef("e_lurker", "Lurker", "beast", 160, 1.1, 1.4, 1.3, 22, 20, element="water"),
-            EnemyDef("e_bog", "Bog Spirit", "yokai", 80, 1.6, 1.2, 1.5, 16, 22, element="water"),
+            EnemyDef("e_yokai", "Yokai", "yokai", 270, 1.2, 1.3, 1.4, 26, 18, rare_drop=0.05, element="water",
+                     lore="A mischievous spirit that drowns travellers in the bog's fog."),
+            EnemyDef("e_lurker", "Lurker", "beast", 160, 1.1, 1.4, 1.3, 22, 20, element="water",
+                     lore="A patient predator that waits beneath the marsh's surface."),
+            EnemyDef("e_bog", "Bog Spirit", "yokai", 80, 1.6, 1.2, 1.5, 16, 22, element="water",
+                     lore="A vengeful spirit of those the marsh has swallowed."),
         ],
     },
     {
         # Zone 4: the sunken ruins — water-themed (the drowned halls).
         "id": "ruins", "name": "Sunken Ruins", "hue": 40,
         "enemies": [
-            EnemyDef("e_guardian", "Guardian", "golem", 200, 2.2, 1.6, 1.6, 14, 26, rare_drop=0.06, element="water"),
-            EnemyDef("e_phantom", "Phantom", "wraith", 260, 1.5, 1.7, 1.7, 28, 20, rare_drop=0.06, element="water"),
-            EnemyDef("e_warden", "Warden", "skeleton", 20, 1.8, 1.8, 1.8, 20, 22, element="water"),
+            EnemyDef("e_guardian", "Guardian", "golem", 200, 2.2, 1.6, 1.6, 14, 26, rare_drop=0.06, element="water",
+                     lore="A stone sentinel who guards the drowned halls, even in death."),
+            EnemyDef("e_phantom", "Phantom", "wraith", 260, 1.5, 1.7, 1.7, 28, 20, rare_drop=0.06, element="water",
+                     lore="A restless shade of a civilisation the sea claimed."),
+            EnemyDef("e_warden", "Warden", "skeleton", 20, 1.8, 1.8, 1.8, 20, 22, element="water",
+                     lore="The last jailer of a prison now buried beneath the waves."),
         ],
     },
     {
         # Zone 5: the oni volcano — fire-themed (the molten peak).
         "id": "volcano", "name": "Oni Volcano", "hue": 10,
         "enemies": [
-            EnemyDef("e_imp", "Fire Imp", "demon", 0, 1.4, 1.8, 1.8, 30, 16, rare_drop=0.07, element="fire"),
-            EnemyDef("e_hound", "Hellhound", "beast", 10, 1.6, 2.0, 1.9, 32, 20, rare_drop=0.07, element="fire"),
-            EnemyDef("e_oni", "Oni", "oni", 350, 2.0, 2.2, 2.2, 26, 22, rare_drop=0.08, element="fire"),
+            EnemyDef("e_imp", "Fire Imp", "demon", 0, 1.4, 1.8, 1.8, 30, 16, rare_drop=0.07, element="fire",
+                     lore="A mischievous flame-sprite that dances on the molten rock."),
+            EnemyDef("e_hound", "Hellhound", "beast", 10, 1.6, 2.0, 1.9, 32, 20, rare_drop=0.07, element="fire",
+                     lore="A burning beast that hunts the living on the volcano's slopes."),
+            EnemyDef("e_oni", "Oni", "oni", 350, 2.0, 2.2, 2.2, 26, 22, rare_drop=0.08, element="fire",
+                     lore="A fiery ogre-demon who feeds on the heat of the mountain."),
         ],
     },
     {
         # Zone 6: the abyss — fire-themed (the burning deep).
         "id": "abyss", "name": "The Abyss", "hue": 280,
         "enemies": [
-            EnemyDef("e_demon", "Demon", "demon", 350, 2.0, 2.2, 2.2, 26, 22, rare_drop=0.08, element="fire"),
-            EnemyDef("e_tentacle", "Tentacle", "beast", 290, 2.2, 2.4, 2.3, 20, 24, element="fire"),
-            EnemyDef("e_abomination", "Abomination", "yokai", 120, 2.8, 2.6, 2.6, 14, 30, element="fire"),
+            EnemyDef("e_demon", "Demon", "demon", 350, 2.0, 2.2, 2.2, 26, 22, rare_drop=0.08, element="fire",
+                     lore="A denizen of the deep that burns with the abyss's fire."),
+            EnemyDef("e_tentacle", "Tentacle", "beast", 290, 2.2, 2.4, 2.3, 20, 24, element="fire",
+                     lore="A many-limbed horror that drags prey into the dark."),
+            EnemyDef("e_abomination", "Abomination", "yokai", 120, 2.8, 2.6, 2.6, 14, 30, element="fire",
+                     lore="A twisted amalgam of the abyss's many victims."),
         ],
     },
     {
         # Zone 7: the sky citadel — wind-themed (the high winds).
         "id": "sky", "name": "Sky Citadel", "hue": 200,
         "enemies": [
-            EnemyDef("e_valkyrie", "Fallen Valkyrie", "wraith", 200, 2.2, 2.4, 2.4, 30, 22, rare_drop=0.09, element="wind"),
-            EnemyDef("e_seraph", "Broken Seraph", "golem", 50, 3.0, 2.6, 2.6, 16, 26, rare_drop=0.09, element="wind"),
-            EnemyDef("e_skyguard", "Sky Guard", "skeleton", 190, 2.4, 2.6, 2.5, 22, 22, element="wind"),
+            EnemyDef("e_valkyrie", "Fallen Valkyrie", "wraith", 200, 2.2, 2.4, 2.4, 30, 22, rare_drop=0.09, element="wind",
+                     lore="A winged warrior who fell from the citadel and now haunts it."),
+            EnemyDef("e_seraph", "Broken Seraph", "golem", 50, 3.0, 2.6, 2.6, 16, 26, rare_drop=0.09, element="wind",
+                     lore="A shattered angel of stone, still guarding the high halls."),
+            EnemyDef("e_skyguard", "Sky Guard", "skeleton", 190, 2.4, 2.6, 2.5, 22, 22, element="wind",
+                     lore="The skeletal remnant of the citadel's once-proud garrison."),
         ],
     },
     {
         # Zone 8: the cosmic void — void-themed (the end of every road).
         "id": "void", "name": "Cosmic Void", "hue": 270,
         "enemies": [
-            EnemyDef("e_voidling", "Voidling", "wraith", 280, 2.6, 2.8, 2.8, 28, 22, rare_drop=0.10, element="void"),
-            EnemyDef("e_stellarbeast", "Stellar Beast", "beast", 220, 2.8, 3.0, 2.9, 24, 24, rare_drop=0.10, element="void"),
-            EnemyDef("e_singularity", "Singularity Spawn", "demon", 310, 3.4, 3.2, 3.2, 18, 28, rare_drop=0.12, element="void"),
+            EnemyDef("e_voidling", "Voidling", "wraith", 280, 2.6, 2.8, 2.8, 28, 22, rare_drop=0.10, element="void",
+                     lore="A fragment of the void given form, hungry for the living."),
+            EnemyDef("e_stellarbeast", "Stellar Beast", "beast", 220, 2.8, 3.0, 2.9, 24, 24, rare_drop=0.10, element="void",
+                     lore="A beast born of starlight and hunger, prowling the void's edge."),
+            EnemyDef("e_singularity", "Singularity Spawn", "demon", 310, 3.4, 3.2, 3.2, 18, 28, rare_drop=0.12, element="void",
+                     lore="A demon spawned at the collapse of a dying star."),
         ],
     },
 ]
@@ -123,15 +157,24 @@ BOSSES: dict[str, EnemyDef] = {
     # Each boss inherits its zone's element theme (the boss is the zone's
     # capstone — same element as the trash enemies). The village boss is
     # neutral so the first boss fight is a clean 1x for a new player.
-    "village":  EnemyDef("b_bandit_king", "Bandit King", "bandit", 0, 6.0, 2.0, 8.0, 12, 36, rare_drop=0.5, desc="The village's tyrant."),
-    "bamboo":   EnemyDef("b_wolf_alpha", "Alpha Wolf", "beast", 0, 7.0, 3.0, 9.0, 16, 38, rare_drop=0.5, desc="The pack leader.", element="wind"),
-    "cave":     EnemyDef("b_bone_lord", "Bone Lord", "skeleton", 0, 8.0, 3.5, 10.0, 14, 40, rare_drop=0.6, desc="Ruler of the echo.", element="wind"),
-    "marsh":    EnemyDef("b_yokai_king", "Yokai King", "yokai", 260, 9.0, 4.0, 12.0, 18, 40, rare_drop=0.6, desc="The marsh's true face.", element="water"),
-    "ruins":    EnemyDef("b_ancient", "Ancient Guardian", "golem", 200, 12.0, 5.0, 14.0, 10, 46, rare_drop=0.7, desc="Older than the road.", element="water"),
-    "volcano":  EnemyDef("b_oni_lord", "Oni Lord", "oni", 10, 14.0, 6.0, 16.0, 14, 46, rare_drop=0.7, desc="Heart of the mountain.", element="fire"),
-    "abyss":    EnemyDef("b_abyssal", "Abyssal Tyrant", "demon", 330, 16.0, 7.0, 18.0, 16, 48, rare_drop=0.8, desc="The deep has a king.", element="fire"),
-    "sky":      EnemyDef("b_fallen", "Fallen Sovereign", "wraith", 200, 18.0, 8.0, 20.0, 18, 50, rare_drop=0.8, desc="A god who chose the road.", element="wind"),
-    "void":     EnemyDef("b_void_god", "Void God", "dragon", 280, 24.0, 10.0, 24.0, 12, 56, rare_drop=1.0, desc="The end of every road.", element="void"),
+    "village":  EnemyDef("b_bandit_king", "Bandit King", "bandit", 0, 6.0, 2.0, 8.0, 12, 36, rare_drop=0.5, desc="The village's tyrant.",
+                         lore="The self-styled king of the village bandits, who hoards the stolen gold in a den beneath the well."),
+    "bamboo":   EnemyDef("b_wolf_alpha", "Alpha Wolf", "beast", 0, 7.0, 3.0, 9.0, 16, 38, rare_drop=0.5, desc="The pack leader.", element="wind",
+                         lore="The alpha of the bamboo wolf-pack, whose howl summons the whole pack to the hunt."),
+    "cave":     EnemyDef("b_bone_lord", "Bone Lord", "skeleton", 0, 8.0, 3.5, 10.0, 14, 40, rare_drop=0.6, desc="Ruler of the echo.", element="wind",
+                         lore="The master of the cave's skeleton host, who commands the echoes to rise and fight."),
+    "marsh":    EnemyDef("b_yokai_king", "Yokai King", "yokai", 260, 9.0, 4.0, 12.0, 18, 40, rare_drop=0.6, desc="The marsh's true face.", element="water",
+                         lore="The true face of the marsh, whose mask hides a thousand drowned souls."),
+    "ruins":    EnemyDef("b_ancient", "Ancient Guardian", "golem", 200, 12.0, 5.0, 14.0, 10, 46, rare_drop=0.7, desc="Older than the road.", element="water",
+                         lore="A guardian older than the road itself, who has outlasted the civilisation it was built to protect."),
+    "volcano":  EnemyDef("b_oni_lord", "Oni Lord", "oni", 10, 14.0, 6.0, 16.0, 14, 46, rare_drop=0.7, desc="Heart of the mountain.", element="fire",
+                         lore="The heart of the volcano, whose rage fuels the mountain's fire."),
+    "abyss":    EnemyDef("b_abyssal", "Abyssal Tyrant", "demon", 330, 16.0, 7.0, 18.0, 16, 48, rare_drop=0.8, desc="The deep has a king.", element="fire",
+                         lore="The tyrant of the abyss, whose crown is the bones of those who came before."),
+    "sky":      EnemyDef("b_fallen", "Fallen Sovereign", "wraith", 200, 18.0, 8.0, 20.0, 18, 50, rare_drop=0.8, desc="A god who chose the road.", element="wind",
+                         lore="A god who chose to walk the road and fell; now the citadel is their tomb."),
+    "void":     EnemyDef("b_void_god", "Void God", "dragon", 280, 24.0, 10.0, 24.0, 12, 56, rare_drop=1.0, desc="The end of every road.", element="void",
+                         lore="The end of every road, whose hunger is the void itself, and whose voice is the silence between the stars."),
 }
 
 

@@ -121,6 +121,10 @@ _SCHEMA: dict[str, type] = {
     "dungeon_floor": int,
     "dungeon_seed": int,
     "cosmic_forge": int,
+    # cnt-quest-codex (Task 26): weekly + chapter quest state.
+    "weekly_quests": list,
+    "weekly_refresh": float,
+    "chapter_quests": list,
     # Meta
     "playtime": float,
     "save_version": int,

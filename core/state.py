@@ -46,6 +46,19 @@ class GameState:
     achievements: set[str] = field(default_factory=set)
     daily_quests: list[dict] = field(default_factory=list)   # [{id, target, progress}]
     daily_refresh: float = 0.0     # epoch when daily quests refresh
+    # Weekly quests (Task 26 / cnt-quest-codex): same shape as
+    # daily_quests (``[{id, target, progress, baseline}]``) but refreshed
+    # every 7d. The ``baseline`` is the cumulative-counter value at
+    # refresh time so the quest tracks this week's progress, not the
+    # lifetime total. ``weekly_refresh`` is the epoch for the next refresh.
+    weekly_quests: list[dict] = field(default_factory=list)
+    weekly_refresh: float = 0.0
+    # Chapter quests (Task 26 / cnt-quest-codex): one-time milestones tied
+    # to zone progression. Same shape as daily_quests (``[{id, target,
+    # progress, claimed}]``) but no refresh -- once claimed, they stay
+    # claimed. Initialized lazily on first ``update_chapter_progress`` call
+    # (so a new player starts with the full chapter list, not an empty one).
+    chapter_quests: list[dict] = field(default_factory=list)
 
     # ---- Ascension ----
     ascend_tier: int = 0
@@ -297,6 +310,12 @@ def _migrate_v2_to_v3(d: dict) -> dict:
     d.setdefault("seen_hints", [])
     # gp-reincarnation-perks
     d.setdefault("cosmic_forge", 0)
+    # cnt-quest-codex (Task 26): weekly + chapter quest state. Seeded
+    # with the same defaults the dataclass uses so a v2 save loaded under
+    # v3+ code has the fields the weekly/chapter logic expects.
+    d.setdefault("weekly_quests", [])
+    d.setdefault("weekly_refresh", 0.0)
+    d.setdefault("chapter_quests", [])
     d["save_version"] = 3
     return d
 

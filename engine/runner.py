@@ -13,7 +13,10 @@ import config as cfg
 from core.state import GameState
 from utils import rng
 from core.bonuses import aggregate_bonuses
-from core.quests import maybe_refresh_dailies, update_daily_progress, check_achievements, award_boss_token
+from core.quests import (maybe_refresh_dailies, update_daily_progress,
+                         check_achievements, award_boss_token,
+                         maybe_refresh_weeklies, update_weekly_progress,
+                         update_chapter_progress)
 from engine.ninja import Ninja, make_ninja, compute_ninja_stats
 from engine.enemy import (Enemy, tick_combat, tap as tap_enemy, nearest_enemy,
                           PARTY_X, spawn_enemy, spawn_boss)
@@ -712,6 +715,21 @@ class Runner:
         for c in completed:
             self.notify(f"Quest complete: {c['name']}  +{c['medals']} medals",
                         (200, 200, 220))
+        # Weekly + chapter quests (Task 26 / cnt-quest-codex). Weekly
+        # quests refresh every 7d and read cumulative counters; chapter
+        # quests are one-time milestones tied to zone progression. Both
+        # award Medals + Amber (no tokens -- tokens come from daily quests
+        # + zone-boss milestones only, distinct sources, no double-counting
+        # with the Heritage passives).
+        maybe_refresh_weeklies(self.state)
+        weekly_completed = update_weekly_progress(self.state)
+        for c in weekly_completed:
+            self.notify(f"Weekly: {c['name']}  +{c['medals']} medals",
+                        (255, 205, 90))
+        chapter_completed = update_chapter_progress(self.state)
+        for c in chapter_completed:
+            self.notify(f"Chapter: {c['name']}  +{c['medals']} medals",
+                        (255, 180, 60))
         newly = check_achievements(self.state)
         for a in newly:
             self.notify(f"Achievement: {a.name}  +{a.reward_amber} amber",

@@ -1,7 +1,15 @@
 """Quest and achievement definitions.
 
 Daily quests refresh every 24h (real time) and reward Medals + Amber.
+Weekly quests refresh every 7d and reward a larger Medals + Amber payout.
+Chapter quests are one-time milestones tied to zone progression (no
+refresh -- they complete once and stay claimed).
 Achievements are long-term milestones that reward Amber + medals.
+
+Quest variety is deliberately bounded (gp-content-variety): daily +
+weekly + chapter + achievements, NOT 6+ quest types. The weekly pool is
+2-3 quests (the same ``DailyQuest`` shape, just a longer refresh + bigger
+reward); the chapter quests are 2-3 one-time milestones.
 """
 from __future__ import annotations
 
@@ -40,6 +48,47 @@ DAILY_POOL: list[DailyQuest] = [
                "ascensions_today", 20, 6),
     DailyQuest("q_firefly_20", "Light Catcher", "Catch 20 fireflies today.", 20,
                "fireflies_today", 10, 3),
+]
+
+
+# Pool from which 2 weekly quests are drawn (refresh 7d, bigger reward).
+# Weekly quests read CUMULATIVE counters (monsters_killed, lifetime_gold,
+# bosses_killed, total_ascensions) -- NOT the daily-reset counters. The
+# progress is measured as the delta from a baseline captured at refresh
+# time, so the quest tracks "this week's" progress, not the lifetime
+# total. The ``DailyQuest`` shape is reused (same fields) so the UI +
+# core logic share one quest shape; the only difference is the longer
+# refresh window + the cumulative-vs-daily progress key.
+WEEKLY_POOL: list[DailyQuest] = [
+    DailyQuest("w_kill_2000", "Weekly Slayer",
+               "Defeat 2,000 enemies this week.", 2000,
+               "monsters_killed", 50, 15),
+    DailyQuest("w_gold_500k", "Weekly Tycoon",
+               "Earn 500,000 gold this week.", 500000,
+               "lifetime_gold", 50, 15),
+    DailyQuest("w_bosses_25", "Weekly Reaper",
+               "Slay 25 bosses this week.", 25,
+               "bosses_killed", 60, 20),
+]
+
+
+# Chapter quests: one-time milestones tied to zone progression. Unlike
+# daily/weekly quests, chapter quests do NOT refresh -- they complete
+# once and stay claimed. The ``progress_key`` reads a cumulative state
+# counter (best_zone / bosses_killed / monsters_killed /
+# total_ascensions); the quest completes the first time the counter
+# reaches the target. The reward is a one-time Medals + Amber payout.
+# Chapter quests are 2-3 entries (NOT 6+ -- no quest-type sprawl).
+CHAPTER_QUESTS: list[DailyQuest] = [
+    DailyQuest("c_zone_5", "Trailblazer",
+               "Reach zone 5 (the Oni Volcano).", 5,
+               "best_zone", 100, 30),
+    DailyQuest("c_bosses_10", "Boss Hunter",
+               "Slay 10 bosses.", 10,
+               "bosses_killed", 100, 30),
+    DailyQuest("c_void", "Voidwalker",
+               "Reach the Cosmic Void (zone 9).", 9,
+               "best_zone", 200, 60),
 ]
 
 
