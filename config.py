@@ -113,6 +113,11 @@ UPGRADE_MAX_LEVEL = 100
 UPGRADE_DEFS = TAP_UPGRADE_DEFS
 
 
+# Combo curve: asymptotic approach to COMBO_MULT_CAP.
+# combo_step upgrade reduces COMBO_TAU (faster ramp), not the step.
+COMBO_TAU = 50.0      # combo count at which the multiplier is ~63% of cap
+
+
 # ---------------------------------------------------------------------------
 # Ascension
 # ---------------------------------------------------------------------------

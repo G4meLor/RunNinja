@@ -29,9 +29,7 @@ from engine.firefly_fx import FireflyFxSystem
 
 
 COMBO_WINDOW = 3.0       # seconds before combo decays
-COMBO_STEP = 0.01        # multiplier per combo
-COMBO_CAP = 200          # max combo for multiplier
-COMBO_MULT_CAP = 3.0
+COMBO_MULT_CAP = 3.0     # asymptotic ceiling for the combo multiplier
 
 
 class Runner:
@@ -94,9 +92,14 @@ class Runner:
     # Combo
     # -----------------------------------------------------------------
     def combo_mult(self) -> float:
-        c = min(self.state.combo, COMBO_CAP)
-        step = COMBO_STEP + _upgrade_val(self.state, "combo_step")
-        return 1.0 + c * step
+        c = self.state.combo
+        tau = cfg.COMBO_TAU - _upgrade_val(self.state, "combo_step")
+        tau = max(5.0, tau)  # floor so the ramp never becomes instant
+        # Asymptotic approach to the multiplier ceiling: at c=0 the
+        # multiplier is 1.0; as c -> inf it approaches COMBO_MULT_CAP.
+        # The bonus above the 1.0x base is (COMBO_MULT_CAP - 1.0), so the
+        # total multiplier is structurally capped at COMBO_MULT_CAP.
+        return 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-c / tau))
 
     def gold_mult(self) -> float:
         evo = aggregate_bonuses(self.state)
