@@ -40,6 +40,7 @@ class Enemy:
     alive: bool = True
     is_boss: bool = False
     is_elite: bool = False
+    is_miniboss: bool = False
     flash: float = 0.0
     last_damage_timer: float = 0.0
     bob: float = 0.0
@@ -56,6 +57,22 @@ def spawn_boss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
                  hp=hp, max_hp=hp, dmg=dmg, gold=gold,
                  speed=bdef.speed * 0.6, size=bdef.size, rare_drop=bdef.rare_drop,
                  is_boss=True)
+
+
+def spawn_miniboss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
+    """A mini-boss: a boss-statted enemy that is NOT the zone boss.
+
+    Built at 0.4x the zone boss stats by the caller. It blocks progress
+    until killed (the world gates ``zone_distance`` on ``miniboss_active``).
+    ``is_boss`` stays False so the runner's boss-FX/loot path does not fire
+    on a mini-boss; ``is_miniboss`` is True so the world releases the
+    progress block on kill.
+    """
+    return Enemy(edef=bdef, name=bdef.name, shape=bdef.shape, hue=bdef.hue,
+                 hp=hp, max_hp=hp, dmg=dmg, gold=gold,
+                 speed=bdef.speed * 0.6, size=bdef.size,
+                 rare_drop=bdef.rare_drop,
+                 is_boss=False, is_miniboss=True)
 
 
 def nearest_enemy(enemies: list[Enemy]) -> Optional[Enemy]:

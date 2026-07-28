@@ -59,6 +59,7 @@ class Runner:
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
+        self.bus.on("miniboss_spawn", self._on_miniboss_spawn)
         self.bus.on("firefly_spawn", self.firefly_fx.on_spawn)
         # Wire the bus into the engine modules.
         from engine import enemy as _e
@@ -70,6 +71,7 @@ class Runner:
         _e.on_enemy_dmg = lambda *a, **k: self.bus.emit("enemy_dmg", *a, **k)
         _e.on_ninja_dmg = lambda *a, **k: self.bus.emit("ninja_dmg", *a, **k)
         self.world.on_boss_spawn = lambda *a, **k: self.bus.emit("boss_spawn", *a, **k)
+        self.world.on_miniboss_spawn = lambda *a, **k: self.bus.emit("miniboss_spawn", *a, **k)
         self.world.on_firefly_spawn = lambda *a, **k: self.bus.emit("firefly_spawn", *a, **k)
         # Notifications for the UI.
         self.notifications: list[tuple[str, float, tuple]] = []
@@ -100,6 +102,14 @@ class Runner:
     def _on_boss_spawn(self, name: str, hue: int) -> None:
         """Trigger boss intro FX when the world spawns a boss."""
         self.boss_fx.start(name, hue)
+
+    def _on_miniboss_spawn(self, name: str, hue: int) -> None:
+        """Trigger a smaller boss-FX intro for a mini-boss.
+
+        The mini-boss reuses the boss intro system but with a shorter,
+        less-dramatic reveal (the brief calls for "a brief" intro).
+        """
+        self.boss_fx.start_miniboss(name, hue)
 
     # -----------------------------------------------------------------
     # Combo
@@ -261,6 +271,16 @@ class Runner:
             self.state.bosses_killed += 1
             self.notify(f"Boss slain: {enemy.name}!", (255, 220, 120))
             self.boss_fx.stop()
+        if enemy.is_miniboss:
+            # Mini-boss kill: a brief notification. The boss-FX intro
+            # self-clears once its shorter intro completes (see
+            # BossFxSystem.update), so no ``boss_fx.stop()`` here.
+            self.notify(f"Mini-boss slain: {enemy.name}!", (255, 200, 130))
+        if enemy.is_elite:
+            # Elite kill: the guaranteed rare_drop is handled by the
+            # chest/drop mechanic (a later task). For now, a brief
+            # notification so the player sees the elite died.
+            self.notify(f"Elite slain: {enemy.name}!", (255, 180, 120))
         # Firefly spawn chance on kill.
         if rng().random() < 0.05:
             self.world.fireflies.append(_make_firefly_near(enemy.x, enemy.y))

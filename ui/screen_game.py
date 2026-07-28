@@ -144,6 +144,14 @@ class GameScreen:
                 fade = max(0.0, (e.last_damage_timer + 0.3) / 0.3)
                 es = es.copy()
                 es.set_alpha(int(255 * fade))
+            # Elites get a distinct red-orange tint so they read as a
+            # tougher variant at a glance. The mini-boss keeps the boss
+            # red — it is already a boss-statted enemy.
+            if e.is_elite and e.alive:
+                tint = pygame.Surface(es.get_size(), pygame.SRCALPHA)
+                tint.fill((255, 140, 60, 90))
+                es = es.copy()
+                es.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
             if e.flash > 0 and e.alive:
                 flash = pygame.Surface(es.get_size(), pygame.SRCALPHA)
                 flash.fill((255, 255, 255, int(120 * e.flash / 0.12)))
@@ -153,10 +161,18 @@ class GameScreen:
             if e.max_hp > 0 and e.alive:
                 bw = max(28, e.size)
                 br = pygame.Rect(ex - bw // 2, ey - 18, bw, 5)
+                # Elites get the warning-amber bar; the boss + mini-boss
+                # keep the red boss bar so the threat read stays consistent.
+                if e.is_boss or e.is_miniboss:
+                    bar_fill = C.text_bad
+                elif e.is_elite:
+                    bar_fill = C.text_warn
+                else:
+                    bar_fill = C.hp
                 draw_bar(surf, br, e.hp / e.max_hp,
-                         fill=(C.text_bad if e.is_boss else C.hp),
+                         fill=bar_fill,
                          bg=C.hp_bg, border=C.panel_border)
-            if e.is_boss and e.alive:
+            if (e.is_boss or e.is_miniboss) and e.alive:
                 draw_text_center(surf, e.name, (ex, ey - 28), font_sm(bold=True), C.text_warn)
             if e.is_elite and e.alive:
                 draw_text_center(surf, "ELITE", (ex, ey - 44), font_xs(bold=True), C.text_warn)
@@ -193,10 +209,16 @@ class GameScreen:
         runner.ninja_fx.draw(surf)
         runner.skill_fx.draw(surf)
         runner.firefly_fx.draw(surf)
-        # Boss health bar overlay (while a boss is alive).
+        # Boss/mini-boss intro + health bar overlay. The mini-boss intro
+        # is brief and does not keep a persistent bar; the zone boss bar
+        # stays until the boss dies.
         if runner.boss_fx.active:
             boss = next((e for e in world.enemies if e.is_boss and e.alive), None)
-            pct = boss.hp / boss.max_hp if boss and boss.max_hp > 0 else 0
+            if boss is None:
+                # Mini-boss intro path: no persistent boss entity to track.
+                pct = 1.0
+            else:
+                pct = boss.hp / boss.max_hp if boss.max_hp > 0 else 0
             runner.boss_fx.draw(surf, pct)
         # Zone transition overlay.
         if runner.zone_fx.active:
