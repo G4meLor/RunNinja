@@ -177,15 +177,25 @@ class Runner:
         self.last_loot: dict = {}
 
     def _refresh_skills(self) -> None:
-        """Rebuild the active-skill set from unlocked skill-tree nodes."""
+        """Rebuild the active-skill set from unlocked skill-tree nodes.
+
+        Task 22: the ``skill_cd`` run upgrade reduces the effective
+        cooldown for all unlocked skills. The cooldown is recomputed
+        here (the base ``SKILL_DEFS`` cooldown * the multiplier) so the
+        reduction applies as long as the skill is unlocked. The upgrade
+        resets on ascension.
+        """
         self.skills.clear()
+        cd_mult = self.skill_cooldown_mult()
         for sid in ("kunai", "shuriken", "rope", "speed"):
             unlock_node = {
                 "kunai": "ab_root", "shuriken": "ab_shuriken",
                 "rope": "ab_rope", "speed": "ab_speed",
             }[sid]
             if unlock_node in self.state.skill_tree:
-                self.skills[sid] = make_skill(sid)
+                sk = make_skill(sid)
+                sk.cooldown = sk.cooldown * cd_mult
+                self.skills[sid] = sk
 
     # -----------------------------------------------------------------
     # FX callbacks
@@ -227,6 +237,12 @@ class Runner:
     def combo_mult(self) -> float:
         c = self.state.combo
         tau = cfg.COMBO_TAU - _upgrade_val(self.state, "combo_step")
+        # Task 22: the combo_step_pct skill-tree bonus reduces tau further
+        # (a faster combo ramp), capped at the same 5.0 floor so the ramp
+        # never becomes instant. The bonus is permanent (skill-tree); the
+        # run upgrade resets on ascension.
+        evo = aggregate_bonuses(self.state)
+        tau -= evo.get("combo_step_pct", 0.0) * cfg.COMBO_TAU
         tau = max(5.0, tau)  # floor so the ramp never becomes instant
         # Asymptotic approach to the multiplier ceiling: at c=0 the
         # multiplier is 1.0; as c -> inf it approaches COMBO_MULT_CAP.
@@ -367,6 +383,55 @@ class Runner:
         return int(evo.get("cleave", 0))
 
     # -----------------------------------------------------------------
+    # Combo decay helpers (Task 22: combo-decay-resistance run upgrades)
+    # -----------------------------------------------------------------
+    def combo_grace(self) -> float:
+        """The current combo grace window (seconds the combo can go
+        negative before fully resetting).
+
+        Base ``COMBO_GRACE`` + the ``combo_grace`` run upgrade (flat
+        additive seconds) + the ``combo_grace_pct`` skill-tree bonus
+        (a multiplier on the base+upgrade grace). The run upgrade
+        resets on ascension so there is no save-migration risk; the
+        skill-tree bonus is permanent.
+        """
+        evo = aggregate_bonuses(self.state)
+        grace_pct = evo.get("combo_grace_pct", 0.0)
+        return (COMBO_GRACE + _upgrade_val(self.state, "combo_grace")) * (1.0 + grace_pct)
+
+    def combo_decay_rate(self) -> float:
+        """The combo timer drain rate multiplier (1.0 = normal, < 1.0 =
+        slower drain from the ``combo_sustain`` run upgrade).
+
+        ``combo_sustain`` is a flat reduction on the drain rate (capped
+        at 0.5 so the combo never freezes). The upgrade resets on
+        ascension so there is no save-migration risk.
+        """
+        sustain = _upgrade_val(self.state, "combo_sustain")
+        return max(0.5, 1.0 - sustain)
+
+    # -----------------------------------------------------------------
+    # Active-skill helpers (Task 22: skill-adjacent run upgrades)
+    # -----------------------------------------------------------------
+    def skill_damage_mult(self) -> float:
+        """The skill damage multiplier from the ``skill_dmg`` run upgrade.
+
+        Base 1.0 + the upgrade's flat additive (same stack as
+        ``tap_mult``). The upgrade resets on ascension.
+        """
+        return 1.0 + _upgrade_val(self.state, "skill_dmg")
+
+    def skill_cooldown_mult(self) -> float:
+        """The skill cooldown multiplier from the ``skill_cd`` run upgrade.
+
+        Base 1.0 - the upgrade's flat reduction (capped at 0.5 so
+        cooldowns never drop below half). The upgrade resets on
+        ascension.
+        """
+        cd = _upgrade_val(self.state, "skill_cd")
+        return max(0.5, 1.0 - cd)
+
+    # -----------------------------------------------------------------
     # Update
     # -----------------------------------------------------------------
     def update(self, dt: float, *, paused: bool = False) -> None:
@@ -444,13 +509,17 @@ class Runner:
         # Charges persist through the decay window and are only cleared
         # on the full reset (the grace window is a "last chance" to
         # refresh the combo, not a fresh start).
+        # Task 22: combo_grace extends the grace window; combo_sustain
+        # slows the decay rate (the timer drains slower, so the combo
+        # lasts longer before hitting the grace floor). Both are run
+        # upgrades that reset on ascension -- no save-migration risk.
         # Sync the combo FX reduced-motion gate from state each tick
         # (the same way main.py wires death_fx; syncing here keeps the
         # gate current if the player toggles reduced_motion mid-run).
         self.combo_fx.reduced_motion = self.state.reduced_motion
         if self.state.combo > 0:
-            self.state.combo_timer -= dt
-            if self.state.combo_timer <= -COMBO_GRACE:
+            self.state.combo_timer -= dt * self.combo_decay_rate()
+            if self.state.combo_timer <= -self.combo_grace():
                 # Combo fully reset: fire the COMBO LOST banner (gated
                 # by reduced_motion inside combo_fx.lost), then clear
                 # the combo + banked charges.
@@ -780,7 +849,13 @@ class Runner:
         self.tap()
 
     def activate_skill(self, sid: str) -> None:
-        """Fire an active skill if unlocked and off cooldown."""
+        """Fire an active skill if unlocked and off cooldown.
+
+        Task 22: the ``skill_dmg`` run upgrade multiplies the damage
+        dealt by all damage skills (kunai/shuriken). The multiplier is
+        applied on top of the existing tap/auto * combo stack so it
+        composes cleanly. The upgrade resets on ascension.
+        """
         sk = self.skills.get(sid)
         if sk is None or not can_fire(sk):
             return
@@ -788,6 +863,7 @@ class Runner:
         self.state.skills_used_today += 1
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
+        skill_m = self.skill_damage_mult()  # Task 22: skill_dmg upgrade
         # Skill VFX.
         self.skill_fx.trigger(sid, self.ninja.x, self.ninja.y, self.world.enemies)
         if sid == "kunai":
@@ -795,7 +871,7 @@ class Runner:
             targets = sorted([e for e in self.world.enemies if e.alive], key=lambda e: e.x)[:5]
             for t in targets:
                 from engine.enemy import _apply_damage
-                dmg = self.ninja.tap_damage * 3 * combo_m
+                dmg = self.ninja.tap_damage * 3 * combo_m * skill_m
                 _apply_damage(t, dmg, is_crit=True,
                               attuned=self.state.attuned_element)
                 if not t.alive:
@@ -806,7 +882,7 @@ class Runner:
             from engine.enemy import _apply_damage
             for t in self.world.enemies:
                 if t.alive:
-                    dmg = self.ninja.auto_damage * 2 * combo_m
+                    dmg = self.ninja.auto_damage * 2 * combo_m * skill_m
                     _apply_damage(t, dmg,
                                   attuned=self.state.attuned_element)
                     if not t.alive:

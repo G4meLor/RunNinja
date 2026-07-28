@@ -178,7 +178,11 @@ def active_per_sec(state: GameState) -> float:
     # ``_upgrade_val`` is just an alias for it).
     from engine.runner import COMBO_MULT_CAP
     c = state.combo
-    tau = max(5.0, cfg.COMBO_TAU - _upgrade_pct(state, "combo_step"))
+    # Task 22: include the combo_step_pct skill-tree bonus (the same one
+    # the runner applies) so the offline cap mirrors the active combo
+    # ramp. The bonus is permanent (skill-tree); the run upgrade resets.
+    tau = max(5.0, cfg.COMBO_TAU - _upgrade_pct(state, "combo_step")
+              - evo.get("combo_step_pct", 0.0) * cfg.COMBO_TAU)
     combo_m = 1.0 + (COMBO_MULT_CAP - 1.0) * (1.0 - math.exp(-c / tau))
     # Gold multiplier (mirrors engine.runner.Runner.gold_mult).
     gold_m = (1.0 + evo.get("gold_pct", 0.0) + evo.get("godai_fire", 0.0)

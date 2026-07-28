@@ -202,6 +202,17 @@ TAP_UPGRADE_DEFS = (
     ("combo_step", "Combo Step", 100, 0.005, 1.01),    # +combo mult per combo
     ("vitality", "Vitality", 60, 20.0, 1.05),          # +max HP per level
     ("defense", "Defense", 80, 1.0, 1.04),             # +flat damage reduction
+    # --- Task 22: run upgrade expansion (13 -> 20) ---
+    # Tap-specialist: +crit chance for taps, +tap attack speed, +% tap dmg.
+    ("tap_crit", "Tap Crit", 90, 0.01, 1.01),          # +crit chance for taps
+    ("tap_speed", "Tap Speed", 90, 0.02, 1.02),        # +tap attack speed
+    ("tap_mastery", "Tap Mastery", 100, 0.03, 1.02),   # +% tap damage capstone
+    # Active-skill-adjacent: +skill damage, +skill cooldown reduction.
+    ("skill_dmg", "Skill Power", 110, 0.05, 1.03),     # +skill damage multiplier
+    ("skill_cd", "Skill Haste", 130, 0.02, 1.01),      # +skill cooldown reduction
+    # Combo-decay-resistance: +extra combo grace, +slower combo decay.
+    ("combo_grace", "Combo Grace", 70, 0.2, 1.02),     # +extra combo grace time
+    ("combo_sustain", "Combo Sustain", 120, 0.01, 1.01),  # +combo decay resistance
 )
 
 # Quick-lookup maps for the engine.

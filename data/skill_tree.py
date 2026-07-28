@@ -28,7 +28,8 @@ class SkillNode:
 
 
 BRANCHES = ("offense", "economy", "elixir", "energy",
-            "firefly", "abilities", "godai")
+            "firefly", "abilities", "godai",
+            "defense", "combo", "tap_mastery")
 
 
 # Branch root configs: (branch, root_id, root_name, root_key, root_val, root_desc)
@@ -45,6 +46,13 @@ _ROOTS = [
      "+10% firefly spawn rate."),
     ("abilities", "ab_root", "Way of Techniques", "unlock_kunai", 1.0,
      "Unlock Kunai Barrage. Throw a storm of blades."),
+    # --- Task 22: new branches (Defense/Combo/Tap Mastery) ---
+    ("defense", "def_root", "Iron Skin", "def_pct", 0.10,
+     "+10% defense. The way of the unbreakable."),
+    ("combo", "combo_root", "Combo Flow", "combo_window", 0.5,
+     "+0.5s combo window. The way of the endless chain."),
+    ("tap_mastery", "tap_mastery_root", "Tap Master", "tap_pct", 0.10,
+     "+10% tap damage. The way of the perfect strike."),
 ]
 
 # Per-tier cost and value multipliers.
@@ -59,6 +67,9 @@ _BRANCH_KEY = {
     "elixir": "elixir_pct",
     "energy": "energy_timer",
     "firefly": "firefly_spawn",
+    "defense": "def_pct",
+    "combo": "combo_window",
+    "tap_mastery": "tap_pct",
 }
 
 # Tier names for flavor.
@@ -73,6 +84,13 @@ _TIER_NAMES = {
                "Tireless Walker", "Eternal Stamina", "Infinite Wind"],
     "firefly": ["Way of Lights", "Lantern Path", "Firefly Song",
                 "Hundred Lights", "Light Sage", "Eternal Glow"],
+    # --- Task 22: new branches ---
+    "defense": ["Iron Skin", "Stone Body", "Mountain Stance",
+                "Unbreakable Will", "Iron Sage", "Eternal Stone"],
+    "combo": ["Combo Flow", "River Strike", "Endless Chain",
+              "Thousand Combos", "Combo Sage", "Eternal Flow"],
+    "tap_mastery": ["Tap Master", "Perfect Strike", "One-Cut Path",
+                    "Thousand Strikes", "Strike Sage", "Eternal Strike"],
 }
 
 # Extra economic nodes (added alongside the main chain) for variety.
@@ -166,6 +184,51 @@ _EXTRA_NODES = [
     # attune + fusion layer on top.
     ("godai_auto_attune", "Auto Attunement", "godai", 500, "godai_gate",
      "auto_attune", 1.0, "Auto-pick the best element for the current zone (idle 2x)."),
+    # --- Task 22: active-skill tier upgrades (t2/t3) chaining off ab_* nodes ---
+    # These deepen the abilities branch by adding tier-2 and tier-3 upgrades
+    # for the kunai and shuriken skill chains. They grant a small permanent
+    # buff to the skill's stat (tap_pct for kunai, atk_pct for shuriken) so
+    # the upgrade is meaningful without a new verb.
+    ("ab_kunai_t2", "Kunai Mastery", "abilities", 150, "ab_kunai",
+     "tap_pct", 0.05, "+5% tap damage. Kunai Barrage tier-2 upgrade."),
+    ("ab_kunai_t3", "Kunai Storm", "abilities", 400, "ab_kunai_t2",
+     "tap_pct", 0.08, "+8% tap damage. Kunai Barrage tier-3 capstone."),
+    ("ab_shuriken_t2", "Shuriken Mastery", "abilities", 300, "ab_shuriken",
+     "atk_pct", 0.05, "+5% auto-attack. Shuriken Vortex tier-2 upgrade."),
+    ("ab_shuriken_t3", "Shuriken Tempest", "abilities", 600, "ab_shuriken_t2",
+     "atk_pct", 0.08, "+8% auto-attack. Shuriken Vortex tier-3 capstone."),
+    # --- Task 22: Defense branch extras (HP + revive) ---
+    ("def_hp1", "Vital Guard", "defense", 30, "def_root",
+     "hp_pct", 0.10, "+10% max HP."),
+    ("def_hp2", "Mountain Body", "defense", 80, "def_hp1",
+     "hp_pct", 0.15, "+15% max HP."),
+    ("def_revive1", "Phoenix Shell", "defense", 120, "def_root",
+     "revive_pct", 0.25, "Revive once per zone at 25% HP."),
+    # --- Task 22: Combo branch extras (grace + step) ---
+    ("combo_grace1", "Graceful Chain", "combo", 30, "combo_root",
+     "combo_grace_pct", 0.20, "+20% combo grace window."),
+    ("combo_grace2", "Eternal Chain", "combo", 80, "combo_grace1",
+     "combo_grace_pct", 0.30, "+30% combo grace window."),
+    ("combo_step1", "Flowing Strikes", "combo", 50, "combo_root",
+     "combo_step_pct", 0.10, "+10% combo multiplier ramp speed."),
+    # --- Task 22: Tap Mastery branch extras (crit + speed) ---
+    ("tap_mastery_crit1", "Critical Tap", "tap_mastery", 30, "tap_mastery_root",
+     "crit_pct", 0.02, "+2% crit chance for taps."),
+    ("tap_mastery_crit2", "Perfect Critical", "tap_mastery", 80, "tap_mastery_crit1",
+     "crit_dmg_pct", 0.10, "+10% crit damage for taps."),
+    ("tap_mastery_speed1", "Lightning Tap", "tap_mastery", 40, "tap_mastery_root",
+     "speed_pct", 0.05, "+5% attack speed for taps."),
+    # --- Task 22: cross-branch capstones ---
+    # These require nodes from a different branch than themselves, so they
+    # are true cross-branch capstones that encourage hybrid builds. The
+    # prereq is a mid-tier node from another branch (the capstone's own
+    # branch is where the node lives, but the prereq is cross-branch).
+    ("capstone_off_def", "Blade and Shield", "offense", 200, "defense_t3",
+     "tap_pct", 0.10, "+10% tap damage. Requires defense tier 3 (cross-branch)."),
+    ("capstone_tap_combo", "Flowing Strike", "tap_mastery", 250, "combo_t3",
+     "tap_pct", 0.12, "+12% tap damage. Requires combo tier 3 (cross-branch)."),
+    ("capstone_def_combo", "Iron Flow", "defense", 250, "offense_t3",
+     "def_pct", 0.10, "+10% defense. Requires offense tier 3 (cross-branch)."),
 ]
 
 
@@ -289,4 +352,8 @@ def branch_color(branch: str):
         "firefly": (255, 240, 120),
         "abilities": (180, 130, 255),
         "godai": (255, 90, 160),
+        # Task 22: new branches.
+        "defense": (140, 180, 255),
+        "combo": (255, 160, 80),
+        "tap_mastery": (220, 100, 200),
     }.get(branch, (200, 200, 220))

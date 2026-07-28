@@ -8,6 +8,7 @@ from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button
 from utils import format_number
 from data import quests as q
+from data import skill_tree as st
 from core import game_economy
 
 
@@ -45,7 +46,7 @@ class RecordsScreen:
             ("Best combo", format_number(state.best_combo_ever), C.gold),
             ("Playtime", _fmt_time(state.playtime), C.text),
             ("Buildings", str(len(state.buildings)), (120, 220, 200)),
-            ("Skills", f"{len(state.skill_tree)}/54", (180, 130, 255)),
+            ("Skills", f"{len(state.skill_tree)}/{len(st.NODES)}", (180, 130, 255)),
         ]
         card_w, card_h = 280, 80
         gap = 14

@@ -79,21 +79,38 @@ def compute_ninja_stats(state: GameState) -> dict:
     tier_mult = _ascend_tier_mult(state)
     # Base values from run upgrades, scaled by the ascension tier.
     tap_base = (10.0 + _upgrade_value(state, "tap_power")) * tier_mult
-    tap_mult = 1.0 + _upgrade_value(state, "tap_mult") + evo.get("tap_pct", 0.0)
+    # tap_mult + tap_mastery (Task 22): tap_mastery is a tap-specialist
+    # capstone that adds +% tap damage on top of the tap_mult + tap_pct stack.
+    tap_mult = (1.0 + _upgrade_value(state, "tap_mult")
+                + _upgrade_value(state, "tap_mastery")
+                + evo.get("tap_pct", 0.0))
     tap_damage = tap_base * tap_mult
 
     auto_base = (8.0 + _upgrade_value(state, "auto_attack")) * tier_mult
     auto_mult = 1.0 + evo.get("atk_pct", 0.0)
     auto_damage = auto_base * auto_mult
 
-    attack_speed = 1.0 + evo.get("speed_pct", 0.0) * 0.5
-    crit_chance = 0.05 + _upgrade_value(state, "crit_chance") + evo.get("crit_pct", 0.0)
+    # attack_speed: speed_pct (skill tree/pets) + tap_speed (Task 22 run
+    # upgrade, tap-specialist). tap_speed is a flat additive on the same
+    # 0.5 factor so it composes cleanly with the other speed sources.
+    attack_speed = 1.0 + (evo.get("speed_pct", 0.0)
+                          + _upgrade_value(state, "tap_speed")) * 0.5
+    # crit_chance: crit_chance run upgrade + crit_pct (skill tree/pets) +
+    # tap_crit (Task 22 run upgrade, tap-specialist). tap_crit is a flat
+    # additive on the same crit_chance stack.
+    crit_chance = (0.05 + _upgrade_value(state, "crit_chance")
+                   + _upgrade_value(state, "tap_crit")
+                   + evo.get("crit_pct", 0.0))
     crit_dmg = 1.5 + _upgrade_value(state, "crit_dmg") + evo.get("crit_dmg_pct", 0.0)
 
-    # Max HP: base + vitality upgrade, × godai_water, × ascension tier.
-    max_hp = (100.0 + _upgrade_value(state, "vitality")) * (1.0 + evo.get("godai_water", 0.0)) * tier_mult
-    # Defense: reduces incoming damage (run upgrade + godai_water).
-    defense = _upgrade_value(state, "defense")
+    # Max HP: base + vitality upgrade, × godai_water, × hp_pct (Task 22
+    # defense branch + gear), × ascension tier.
+    max_hp = ((100.0 + _upgrade_value(state, "vitality"))
+              * (1.0 + evo.get("godai_water", 0.0) + evo.get("hp_pct", 0.0))
+              * tier_mult)
+    # Defense: reduces incoming damage (run upgrade + def_pct from the
+    # Task 22 defense branch + gear).
+    defense = _upgrade_value(state, "defense") * (1.0 + evo.get("def_pct", 0.0))
 
     # ---- Build specialization (Dojos) + Heritage ----
     # Each dojo adds a flat pct to its mapped stat. The buffs are
