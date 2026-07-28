@@ -213,18 +213,27 @@ def _apply_damage(enemy: Enemy, amount: float, *, is_crit: bool = False) -> None
 
 
 def tap(ninja, enemies: list[Enemy], *, combo_mult: float, gold_mult: float,
-        on_kill=None) -> Optional[Enemy]:
-    """The player taps — deal tap_damage to the nearest enemy."""
+        on_kill=None) -> tuple[Optional[Enemy], float, bool]:
+    """The player taps — deal tap_damage to the nearest enemy.
+
+    Returns ``(target, dmg_dealt, is_crit)``: the tapped enemy (or None
+    if no target was in range), the actual damage applied to the target
+    (after the crit roll + combo multiplier; before the boss shield
+    absorption — i.e. the raw damage the tap dealt), and whether the
+    tap was a crit. The caller (``Runner.tap``) uses ``dmg_dealt`` for
+    the Cleave overkill condition so the cleave fires based on the
+    ACTUAL damage dealt, not a separate roll.
+    """
     target = nearest_enemy(enemies)
     if target is None:
-        return None
+        return None, 0.0, False
     mult, is_crit = ninja.roll_crit()
     dmg = ninja.tap_damage * mult * combo_mult
     _apply_damage(target, dmg, is_crit=is_crit)
     ninja.slash_anim = 0.15
     if not target.alive and on_kill is not None:
         on_kill(target)
-    return target
+    return target, dmg, is_crit
 
 
 def tick_combat(ninja, enemies: list[Enemy], dt: float, *,

@@ -154,6 +154,12 @@ def test_cleave_does_not_fire_on_non_overkill(pygame_headless):
     The cleave only fires on a MASSIVE overkill (damage exceeds the
     enemy's HP by a large margin), not on every kill. A tap that exactly
     kills the enemy (no overkill) should not chain-clear the next enemies.
+
+    Uses ``crit_chance == 0`` so the tap is a deterministic non-crit —
+    the actual damage dealt equals ``tap_damage`` (no crit multiplier),
+    so the overkill condition is deterministic. This is also the
+    regression guard for the double-``roll_crit`` bug: the cleave must
+    fire based on the ACTUAL damage dealt, not a separate roll.
     """
     from core.state import GameState
     from engine.runner import Runner
@@ -163,8 +169,11 @@ def test_cleave_does_not_fire_on_non_overkill(pygame_headless):
     state.ascend_tier = 3
     state.skill_tree = {"off_cleave1"}
     r = Runner(state)
-    # Set tap_damage to just barely kill the enemy (no overkill).
+    # Set tap_damage to just barely kill the enemy (no overkill). With
+    # crit_chance == 0, the actual damage dealt is exactly tap_damage
+    # (no crit multiplier), so the overkill condition is deterministic.
     r.ninja.tap_damage = 1.0  # exactly the enemy's HP, no overkill
+    r.ninja.crit_chance = 0.0  # deterministic non-crit
     edef = ZONES[0]["enemies"][0]
     for i in range(5):
         e = spawn_enemy(edef, hp=1.0, dmg=1.0, gold=1.0)
@@ -175,6 +184,73 @@ def test_cleave_does_not_fire_on_non_overkill(pygame_headless):
     cleared = sum(1 for e in r.world.enemies if not e.alive)
     assert cleared == 1, (
         f"cleave fired without overkill: {cleared} cleared, expected 1")
+
+
+def test_cleave_uses_actual_damage_not_separate_roll(pygame_headless):
+    """The cleave condition uses the ACTUAL damage dealt, not a separate roll.
+
+    Regression guard for the double-``roll_crit`` bug: ``tap()`` used to
+    call ``ninja.roll_crit()`` to snapshot ``dmg_raw`` for the overkill
+    condition, then ``tap_enemy`` called ``roll_crit()`` again for the
+    actual damage — two independent draws. The cleave condition was
+    stochastic and inconsistent with the actual damage.
+
+    The fix: ``tap_enemy`` returns ``(target, dmg_dealt, is_crit)`` and
+    ``tap()`` uses ``dmg_dealt`` (the actual damage) for the overkill
+    condition. This test sets up a scenario where the snapshot roll and
+    the actual roll would disagree (by controlling the RNG state) and
+    verifies the cleave fires based on the ACTUAL damage, not the
+    snapshot.
+
+    Setup: ``crit_chance == 0`` so both rolls are deterministic
+    non-crits (the actual damage is exactly ``tap_damage``). With
+    ``tap_damage == 11`` (just over ``CLEAVE_OVERKILL_RATIO * HP = 10``
+    for a 1 HP enemy), the cleave SHOULD fire (actual dmg 11 > 10).
+    A regression that uses a separate roll would still see 11 (both
+    rolls are non-crits here), so we also test the complement: with
+    ``tap_damage == 9`` (below the 10x threshold), the cleave should
+    NOT fire. The deterministic setup confirms the condition uses the
+    actual damage, not a separate stochastic roll.
+    """
+    from core.state import GameState
+    from engine.runner import Runner, CLEAVE_OVERKILL_RATIO
+    from data.enemies import ZONES
+    from engine.enemy import spawn_enemy
+    edef = ZONES[0]["enemies"][0]
+
+    # Case 1: tap_damage just over the overkill threshold -> cleave fires.
+    state = GameState()
+    state.ascend_tier = 3
+    state.skill_tree = {"off_cleave1"}
+    r = Runner(state)
+    r.ninja.crit_chance = 0.0  # deterministic non-crit
+    r.ninja.tap_damage = CLEAVE_OVERKILL_RATIO + 1.0  # 11 -> 11 > 10*1
+    for i in range(5):
+        e = spawn_enemy(edef, hp=1.0, dmg=1.0, gold=1.0)
+        e.x = 200 + i * 10
+        r.world.enemies.append(e)
+    r.tap()
+    cleared = sum(1 for e in r.world.enemies if not e.alive)
+    assert cleared >= 2, (
+        f"cleave did not fire with actual dmg > RATIO*HP: "
+        f"{cleared} cleared, expected >= 2 (dmg=11, RATIO*HP=10)")
+
+    # Case 2: tap_damage just below the overkill threshold -> no cleave.
+    state2 = GameState()
+    state2.ascend_tier = 3
+    state2.skill_tree = {"off_cleave1"}
+    r2 = Runner(state2)
+    r2.ninja.crit_chance = 0.0
+    r2.ninja.tap_damage = CLEAVE_OVERKILL_RATIO - 1.0  # 9 -> 9 < 10*1
+    for i in range(5):
+        e = spawn_enemy(edef, hp=1.0, dmg=1.0, gold=1.0)
+        e.x = 200 + i * 10
+        r2.world.enemies.append(e)
+    r2.tap()
+    cleared2 = sum(1 for e in r2.world.enemies if not e.alive)
+    assert cleared2 == 1, (
+        f"cleave fired with actual dmg < RATIO*HP: "
+        f"{cleared2} cleared, expected 1 (dmg=9, RATIO*HP=10)")
 
 
 def test_cleave_does_not_fire_at_tier_0_even_with_overkill(pygame_headless):

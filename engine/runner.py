@@ -452,46 +452,50 @@ class Runner:
         # fires when the tap damage exceeds the enemy's remaining HP by
         # a large margin (CLEAVE_OVERKILL_RATIO * HP), i.e. the enemy
         # was one-shot by a huge margin.
-        target = nearest_enemy(self.world.enemies)
-        target_hp_before = target.hp if target is not None else 0.0
-        # Snapshot the tap's raw damage (tap_damage * crit_mult * combo_m)
-        # so we can compare it to the target's pre-tap HP for the overkill
-        # condition. The actual damage applied to the enemy is the same
-        # amount (the enemy's HP is reduced by exactly dmg, modulo the
-        # boss shield); for a non-boss target, dmg_dealt == dmg_raw.
-        mult, is_crit = self.ninja.roll_crit()
-        dmg_raw = self.ninja.tap_damage * mult * combo_m
-        target = tap_enemy(self.ninja, self.world.enemies,
-                           combo_mult=combo_m, gold_mult=gold_m,
-                           on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo))
+        target_pre = nearest_enemy(self.world.enemies)
+        target_hp_before = target_pre.hp if target_pre is not None else 0.0
+        # ``tap_enemy`` returns ``(target, dmg_dealt, is_crit)`` so we
+        # can use the ACTUAL damage dealt for the cleave overkill
+        # condition (not a separate roll — see the review note on the
+        # double ``roll_crit`` bug). The actual damage is the tap's
+        # tap_damage * crit_mult * combo_m (the same value
+        # ``_apply_damage`` reduced the target's HP by, modulo the boss
+        # shield); for a non-boss target, the shield is 0 so
+        # ``dmg_dealt`` is the full damage applied.
+        target, dmg_dealt, _is_crit = tap_enemy(
+            self.ninja, self.world.enemies,
+            combo_mult=combo_m, gold_mult=gold_m,
+            on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo))
         # Restore the ninja's real crit_chance (the override was only
         # for this tap).
         self.ninja.crit_chance = _saved_crit_chance
         # Cleave (Task 16): if the tap massively overkilled the target
-        # (damage exceeded the target's HP by a large margin), chain-clear
-        # the next ``cleave_count()`` enemies. The cleave is gated behind
-        # mid-ascension (``cleave_count() == 0`` below tier 3), so a new
-        # player never sees splash. Each chain-cleared enemy goes through
-        # the normal kill path (``_on_enemy_killed``) so
-        # monsters_killed, gold, combo, bestiary/achievement reveals all
-        # fire — the cleave does NOT bypass the kill path, it just
-        # clears the enemies in one burst.
+        # (the actual damage dealt exceeded the target's pre-tap HP by
+        # a large margin), chain-clear the next ``cleave_count()``
+        # enemies. The cleave is gated behind mid-ascension
+        # (``cleave_count() == 0`` below tier 3), so a new player never
+        # sees splash. Each chain-cleared enemy goes through the normal
+        # kill path (``_on_enemy_killed``) so monsters_killed, gold,
+        # combo, bestiary/achievement reveals all fire — the cleave does
+        # NOT bypass the kill path, it just clears the enemies in one
+        # burst.
         if target is not None and not target.alive:
             cleave_k = self.cleave_count()
             if cleave_k > 0:
-                # The overkill condition: the tap's raw damage exceeded
-                # ``CLEAVE_OVERKILL_RATIO`` times the target's pre-tap HP
-                # (a massive overkill, not just a kill). This is the
-                # "damage massively overkills" trigger from the brief.
-                # We use the tap's RAW damage (dmg_raw) vs the target's
-                # pre-tap HP — a tap that exactly kills (dmg_raw == HP)
-                # does NOT trigger the cleave; a tap that one-shots a
-                # 1 HP enemy with 10k damage (dmg_raw = 10k) does. The
-                # boss shield is not a factor here because the cleave is
-                # for trash enemies (bosses are excluded from the chain
-                # in ``_apply_cleave``); for a non-boss target, the
-                # shield is 0 so dmg_raw is the actual damage dealt.
-                if target_hp_before > 0 and dmg_raw > target_hp_before * CLEAVE_OVERKILL_RATIO:
+                # The overkill condition: the tap's ACTUAL damage
+                # exceeded ``CLEAVE_OVERKILL_RATIO`` times the target's
+                # pre-tap HP (a massive overkill, not just a kill). This
+                # is the "damage massively overkills" trigger from the
+                # brief. We use the ACTUAL damage dealt (``dmg_dealt``,
+                # returned by ``tap_enemy``) vs the target's pre-tap HP
+                # — a tap that exactly kills (dmg_dealt == HP) does NOT
+                # trigger the cleave; a tap that one-shots a 1 HP enemy
+                # with 10k damage (dmg_dealt = 10k) does. The boss
+                # shield is not a factor here because the cleave is for
+                # trash enemies (bosses are excluded from the chain in
+                # ``_apply_cleave``); for a non-boss target, the shield
+                # is 0 so dmg_dealt is the full damage applied.
+                if target_hp_before > 0 and dmg_dealt > target_hp_before * CLEAVE_OVERKILL_RATIO:
                     self._apply_cleave(target, cleave_k, combo_m, gold_m, evo)
         # Also try to catch a firefly near the tap.
         # (The UI passes the tap position; here we approximate with nearest.)
