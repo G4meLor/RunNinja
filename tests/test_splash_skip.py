@@ -371,8 +371,9 @@ def test_yokai_portal_kill_counts_in_bosses_killed(pygame_headless):
     # Kill the boss through the runner's kill path (the normal path).
     boss.alive = False
     boss.hp = 0
+    from core.bonuses import aggregate_bonuses
     r._on_enemy_killed(boss, r.combo_mult(), r.gold_mult(),
-                       __import__("core.bonuses", fromlist=["aggregate_bonuses"]).aggregate_bonuses(state))
+                       aggregate_bonuses(state))
     after = state.bosses_killed
     assert after == before + 1, (
         f"yokai portal kill did not count in bosses_killed: "
