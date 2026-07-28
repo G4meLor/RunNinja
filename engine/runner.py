@@ -7,6 +7,7 @@ progression.  Exposes a single ``update(dt)`` the main loop calls.
 from __future__ import annotations
 
 import math
+import time
 
 import config as cfg
 from core.state import GameState
@@ -155,6 +156,14 @@ class Runner:
         # the first fusion fires as soon as the conditions are met (no
         # 30s wait on a fresh run).
         self._fusion_timer: float = 0.0
+        # Tap fatigue (Task 24 / gp-tap-auto-rebalance): anti-macro for
+        # active tapping. A rolling list of recent tap timestamps (epoch
+        # seconds); ``tap_fatigue_mult`` counts the taps in the last
+        # TAP_FATIGUE_WINDOW seconds and applies a per-tap penalty above
+        # the threshold, floored at TAP_FATIGUE_FLOOR. The window is 1.0s
+        # so a macro that fires 100 taps/s does not trivialize the game;
+        # the floor (0.3x) keeps tap meaningful even under heavy fatigue.
+        self._tap_timestamps: list[float] = []
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
@@ -431,6 +440,36 @@ class Runner:
         """
         cd = _upgrade_val(self.state, "skill_cd")
         return max(0.5, 1.0 - cd)
+
+    # -----------------------------------------------------------------
+    # Tap fatigue (Task 24 / gp-tap-auto-rebalance)
+    # -----------------------------------------------------------------
+    def tap_fatigue_mult(self) -> float:
+        """The current tap fatigue multiplier (1.0 = no fatigue, 0.3 = floor).
+
+        Counts the taps in the last ``TAP_FATIGUE_WINDOW`` seconds. If the
+        count exceeds ``TAP_FATIGUE_THRESHOLD`` (5), each tap above the
+        threshold reduces the multiplier by ``TAP_FATIGUE_PER_TAP`` (5%),
+        floored at ``TAP_FATIGUE_FLOOR`` (0.3x) so tapping never becomes
+        useless. The window is 1.0 second so a macro that fires 100 taps/s
+        is capped at the floor; a player tapping at 5 taps/s or less pays
+        no fatigue. This bounds the active-burst upside so auto-attack
+        remains the backbone DPS.
+        """
+        now = time.monotonic()
+        # Drop timestamps older than the window.
+        window = cfg.TAP_FATIGUE_WINDOW
+        self._tap_timestamps = [t for t in self._tap_timestamps
+                                if now - t < window]
+        taps = len(self._tap_timestamps)
+        if taps <= cfg.TAP_FATIGUE_THRESHOLD:
+            return 1.0
+        excess = taps - cfg.TAP_FATIGUE_THRESHOLD
+        return max(cfg.TAP_FATIGUE_FLOOR, 1.0 - excess * cfg.TAP_FATIGUE_PER_TAP)
+
+    def _record_tap(self) -> None:
+        """Record a tap timestamp for the fatigue window."""
+        self._tap_timestamps.append(time.monotonic())
 
     # -----------------------------------------------------------------
     # Update
@@ -734,6 +773,10 @@ class Runner:
         """The player taps the screen — deal tap damage to the nearest enemy."""
         if not self.ninja.alive:
             return
+        # Task 24 (gp-tap-auto-rebalance): record this tap for the fatigue
+        # window BEFORE computing the multiplier so the count is current.
+        self._record_tap()
+        fatigue_m = self.tap_fatigue_mult()
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
         evo = aggregate_bonuses(self.state)
@@ -746,6 +789,13 @@ class Runner:
         _saved_crit_chance = self.ninja.crit_chance
         if self._executioner_timer > 0:
             self.ninja.crit_chance = 1.0  # guaranteed crit
+        # Tap fatigue (Task 24): scale the ninja's tap_damage by the
+        # fatigue multiplier for this tap (restored after, same pattern
+        # as the crit_chance override above). The fatigue multiplier is
+        # 1.0 at/below 5 taps/s and floors at 0.3x so tapping never
+        # becomes useless.
+        _saved_tap_damage = self.ninja.tap_damage
+        self.ninja.tap_damage = self.ninja.tap_damage * fatigue_m
         # Snapshot the target's HP before the tap so we can detect the
         # massive overkill (the cleave trigger condition). The cleave
         # fires when the tap damage exceeds the enemy's remaining HP by
@@ -766,9 +816,10 @@ class Runner:
             combo_mult=combo_m, gold_mult=gold_m,
             on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, evo),
             attuned=self.state.attuned_element)
-        # Restore the ninja's real crit_chance (the override was only
-        # for this tap).
+        # Restore the ninja's real crit_chance + tap_damage (the
+        # overrides were only for this tap).
         self.ninja.crit_chance = _saved_crit_chance
+        self.ninja.tap_damage = _saved_tap_damage
         # Cleave (Task 16): if the tap massively overkilled the target
         # (the actual damage dealt exceeded the target's pre-tap HP by
         # a large margin), chain-clear the next ``cleave_count()``
@@ -1032,6 +1083,9 @@ class Runner:
         # ``update`` tick, and a manual attunement persists across the
         # ascension (the player's choice is sticky).
         self._fusion_timer = 0.0
+        # Reset the tap fatigue window on ascension (transient — the
+        # rolling tap timestamps clear so the new run starts fresh).
+        self._tap_timestamps = []
         # Clear all FX.
         self.fx.texts.clear()
         self.death_fx.fx.clear()

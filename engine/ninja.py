@@ -78,7 +78,13 @@ def compute_ninja_stats(state: GameState) -> dict:
     # Ascension tier multiplier (the prestige ladder's stat_mult).
     tier_mult = _ascend_tier_mult(state)
     # Base values from run upgrades, scaled by the ascension tier.
-    tap_base = (10.0 + _upgrade_value(state, "tap_power")) * tier_mult
+    # Task 24 (gp-tap-auto-rebalance): the tap base CONSTANT is scaled by
+    # ``TAP_BASE_SCALE`` (0.2) so auto is the backbone at level 0
+    # (auto_damage >= tap_damage). The flat ``tap_power`` upgrade dominates
+    # both bases at high levels, so the constant mainly sets the early-game
+    # flavor; the tap_mult / auto_mult run upgrades bring tap up to ~3x
+    # auto at max (the active-play bonus, bounded).
+    tap_base = (10.0 * cfg.TAP_BASE_SCALE + _upgrade_value(state, "tap_power")) * tier_mult
     # tap_mult + tap_mastery (Task 22): tap_mastery is a tap-specialist
     # capstone that adds +% tap damage on top of the tap_mult + tap_pct stack.
     tap_mult = (1.0 + _upgrade_value(state, "tap_mult")
@@ -87,7 +93,12 @@ def compute_ninja_stats(state: GameState) -> dict:
     tap_damage = tap_base * tap_mult
 
     auto_base = (8.0 + _upgrade_value(state, "auto_attack")) * tier_mult
-    auto_mult = 1.0 + evo.get("atk_pct", 0.0)
+    # Task 24 (gp-tap-auto-rebalance): auto_mult now mirrors tap_mult as a
+    # run upgrade (a new option, not a pure nerf). Tuned (base=0.025,
+    # growth=1.02) so at max upgrades the tap:auto ratio is ~3:1 (not the
+    # pre-rebalance 58:1 / 94:1). The evo atk_pct (skill tree + pets +
+    # dojo + heritage) stacks additively on top.
+    auto_mult = 1.0 + _upgrade_value(state, "auto_mult") + evo.get("atk_pct", 0.0)
     auto_damage = auto_base * auto_mult
 
     # attack_speed: speed_pct (skill tree/pets) + tap_speed (Task 22 run

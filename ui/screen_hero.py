@@ -223,13 +223,18 @@ class HeroScreen:
         parts: list[str] = []
 
         if key == "tap_damage":
-            parts.append(f"base {format_number(10.0)}")
+            # Task 24: base 10.0 scaled by TAP_BASE_SCALE (0.2) -> 2.0.
+            parts.append(f"base {format_number(10.0 * cfg.TAP_BASE_SCALE)}")
             upf = uv("tap_power")
             if upf > 0:
                 parts.append(f"upg +{format_number(upf)}")
             upm = uv("tap_mult")
             if upm > 0:
                 parts.append(f"upg +{upm * 100:.0f}%")
+            # tap_mastery (Task 22): +% tap damage capstone.
+            upm2 = uv("tap_mastery")
+            if upm2 > 0:
+                parts.append(f"mastery +{upm2 * 100:.0f}%")
             sk = skill_b.get("tap_pct", 0.0)
             if sk > 0:
                 parts.append(f"skill +{sk * 100:.0f}%")
@@ -244,6 +249,10 @@ class HeroScreen:
             upf = uv("auto_attack")
             if upf > 0:
                 parts.append(f"upg +{format_number(upf)}")
+            # auto_mult (Task 24): +% auto-attack damage (mirrors tap_mult).
+            uam = uv("auto_mult")
+            if uam > 0:
+                parts.append(f"upg +{uam * 100:.0f}%")
             sk = skill_b.get("atk_pct", 0.0)
             if sk > 0:
                 parts.append(f"skill +{sk * 100:.0f}%")

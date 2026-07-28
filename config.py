@@ -213,6 +213,14 @@ TAP_UPGRADE_DEFS = (
     # Combo-decay-resistance: +extra combo grace, +slower combo decay.
     ("combo_grace", "Combo Grace", 70, 0.2, 1.02),     # +extra combo grace time
     ("combo_sustain", "Combo Sustain", 120, 0.01, 1.01),  # +combo decay resistance
+    # --- Task 24: tap-vs-auto rebalance (gp-tap-auto-rebalance) ---
+    # auto_mult mirrors tap_mult so auto-attack gets the same multiplicative
+    # upgrade path tap has had since launch. Tuned (base=0.025, growth=1.02)
+    # so at max upgrades the tap:auto ratio is ~3:1 (not the pre-rebalance
+    # 58:1 / 94:1). The base is half of tap_mult's (0.05) so tap retains a
+    # meaningful-but-bounded edge (the active-play bonus), while auto is the
+    # backbone (auto_damage >= tap_damage at level 0).
+    ("auto_mult", "Auto Multiplier", 60, 0.025, 1.02),  # +% auto-attack damage
 )
 
 # Quick-lookup maps for the engine.
@@ -229,6 +237,29 @@ UPGRADE_DEFS = TAP_UPGRADE_DEFS
 # Combo curve: asymptotic approach to COMBO_MULT_CAP.
 # combo_step upgrade reduces COMBO_TAU (faster ramp), not the step.
 COMBO_TAU = 50.0      # combo count at which the multiplier is ~63% of cap
+
+
+# ---------------------------------------------------------------------------
+# Tap-vs-auto rebalance (Task 24 / gp-tap-auto-rebalance)
+# ---------------------------------------------------------------------------
+# Tap base scale: the tap base CONSTANT (10.0) is scaled down so auto is the
+# backbone at level 0 (auto_damage >= tap_damage). The flat upgrade
+# ``tap_power`` dominates both bases at high levels, so the constant mainly
+# sets the early-game flavor: at level 0, tap = 10 * 0.2 = 2, auto = 8. The
+# tap_mult / auto_mult run upgrades then bring tap up to ~3x auto at max.
+TAP_BASE_SCALE = 0.2       # tap base constant scaled down ~5x (2.0 vs 10.0)
+
+# Tap fatigue: anti-macro for active tapping. Above TAP_FATIGUE_THRESHOLD
+# taps in the last TAP_FATIGUE_WINDOW seconds, each additional tap reduces
+# the tap damage multiplier by TAP_FATIGUE_PER_TAP (5%), floored at
+# TAP_FATIGUE_FLOOR (0.3x) so tapping never becomes useless. The window is
+# 1 second (taps older than 1s drop out of the count). This caps the
+# active-burst upside so a macro that fires 100 taps/s does not trivialize
+# the game; the floor (0.3x) keeps tap meaningful even under heavy fatigue.
+TAP_FATIGUE_PER_TAP = 0.05    # 5% per tap above threshold
+TAP_FATIGUE_THRESHOLD = 5     # taps/window before fatigue kicks in
+TAP_FATIGUE_FLOOR = 0.3       # floor (tapping never becomes useless)
+TAP_FATIGUE_WINDOW = 1.0      # seconds; the rolling window for tap counting
 
 
 # ---------------------------------------------------------------------------
