@@ -417,7 +417,11 @@ class Runner:
         evo = aggregate_bonuses(self.state)
         for f in self.world.fireflies[:]:
             if abs(f.x - x) < 20 + f.size and abs(f.y - y) < 20 + f.size:
-                gold = catch_firefly(f, base_gold=50 * (1 + self.state.zone_index * 0.5),
+                # Firefly gold scales with the in-cycle zone (0..8) so
+                # it stays bounded across cycles (the cycle multiplier
+                # scales enemy stats, not firefly rewards).
+                in_cycle = self.state.zone_index % 9
+                gold = catch_firefly(f, base_gold=50 * (1 + in_cycle * 0.5),
                                       combo_mult=self.combo_mult(),
                                       firefly_gold_mult=1.0 + evo.get("firefly_gold", 0.0),
                                       firefly_value_mult=1.0 + evo.get("firefly_value", 0.0))

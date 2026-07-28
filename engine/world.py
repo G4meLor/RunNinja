@@ -76,7 +76,11 @@ class World:
         return base * (cfg.CYCLE_GOLD_MULT ** self.cycle) * edef.gold_mult
 
     def spawn_interval(self, density_pct: float = 0.0) -> float:
-        base = cfg.SPAWN_INTERVAL * (cfg.SPAWN_INTERVAL_MIN / cfg.SPAWN_INTERVAL) ** min(1.0, self.zone_index / 8.0)
+        # Spawn rate ramps with the in-cycle zone (0..8) and saturates at
+        # the floor by the end of the first cycle; later cycles keep the
+        # floor (the cycle multiplier scales stats, not spawn rate, so
+        # the road never goes empty but also doesn't become a wall).
+        base = cfg.SPAWN_INTERVAL * (cfg.SPAWN_INTERVAL_MIN / cfg.SPAWN_INTERVAL) ** min(1.0, self.zone_in_cycle / 8.0)
         base = max(cfg.SPAWN_INTERVAL_MIN, base)
         base *= (1.0 - min(0.8, density_pct))
         return max(cfg.SPAWN_INTERVAL_MIN, base)
