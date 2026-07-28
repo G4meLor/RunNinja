@@ -393,9 +393,21 @@ class Runner:
             return
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
+        # Executioner's Edge finisher: while the timer is > 0, every tap
+        # is a guaranteed crit. We model this by briefly maxing the
+        # ninja's crit_chance for the duration of the tap (the value is
+        # restored after), so the existing roll_crit path inside
+        # ``tap_enemy`` picks it up. (Same pattern as the override in
+        # ``update`` around ``tick_combat`` for auto-attacks.)
+        _saved_crit_chance = self.ninja.crit_chance
+        if self._executioner_timer > 0:
+            self.ninja.crit_chance = 1.0  # guaranteed crit
         target = tap_enemy(self.ninja, self.world.enemies,
                            combo_mult=combo_m, gold_mult=gold_m,
                            on_kill=lambda e: self._on_enemy_killed(e, combo_m, gold_m, aggregate_bonuses(self.state)))
+        # Restore the ninja's real crit_chance (the override was only
+        # for this tap).
+        self.ninja.crit_chance = _saved_crit_chance
         # Also try to catch a firefly near the tap.
         # (The UI passes the tap position; here we approximate with nearest.)
 

@@ -210,7 +210,7 @@ def test_phantom_step_boss_kill_if_combo_gte_100(pygame_headless):
 
 
 def test_phantom_step_no_kill_if_combo_lt_100(pygame_headless):
-    """phantom_step with combo < 100 does NOT kill the boss (but still spends)."""
+    """phantom_step with combo < 100 does NOT kill the boss (refunds the charges)."""
     from core.state import GameState
     from engine.runner import Runner
     state = GameState()
@@ -227,6 +227,9 @@ def test_phantom_step_no_kill_if_combo_lt_100(pygame_headless):
     # Boss is still alive (combo < 100).
     assert boss.alive, (
         "phantom_step killed boss with combo < 100 — should only kill at >=100")
+    # Charges are refunded (the finisher is a no-op without combo >= 100).
+    assert state.combo_charges == 2, (
+        f"phantom_step did not refund charges on combo < 100: {state.combo_charges}")
 
 
 def test_bosses_auto_killable_without_phantom_step(pygame_headless):
@@ -266,6 +269,85 @@ def test_activate_finisher_executioner_edge_spends_charge(pygame_headless):
     state.combo_charges = 1
     r.activate_finisher("executioner_edge")
     assert state.combo_charges == 0
+
+
+def test_executioner_edge_guaranteed_crit_on_tap(pygame_headless):
+    """Executioner's Edge makes every tap a guaranteed crit while the timer is > 0.
+
+    Regression for the bug where the override only covered auto-attacks
+    inside ``update()`` (via ``tick_combat``) and missed the player-tap
+    path (``tap()`` -> ``tap_enemy`` -> ``ninja.roll_crit``). The fix
+    applies the same save/restore override in ``tap()`` so taps also
+    get ``crit_chance = 1.0`` while ``_executioner_timer > 0``.
+
+    The test asserts the damage dealt to a fresh enemy equals
+    ``tap_damage * crit_dmg`` (the crit multiplier) — i.e. the tap was
+    a crit. Without the fix, the tap uses the ninja's real crit_chance
+    (0.05), so a crit is unlikely (5%) and the damage would almost
+    always equal ``tap_damage * 1.0`` (non-crit).
+    """
+    from core.state import GameState
+    from engine.runner import Runner
+    state = GameState()
+    r = Runner(state)
+    # Arm the Executioner's Edge timer (as if the finisher was just used).
+    r._executioner_timer = 5.0
+    # Spawn a fresh enemy with known HP.
+    from data.enemies import ZONES
+    edef = ZONES[0]["enemies"][0]
+    from engine.enemy import spawn_enemy
+    enemy_hp = 10_000_000.0
+    e = spawn_enemy(edef, hp=enemy_hp, dmg=1.0, gold=1.0)
+    r.world.enemies.append(e)
+    # Tap once. With the fix, the tap is a guaranteed crit, so the
+    # damage equals tap_damage * crit_dmg (the crit multiplier).
+    r.tap()
+    damage_dealt = enemy_hp - e.hp
+    expected_crit_damage = r.ninja.tap_damage * r.ninja.crit_dmg
+    assert damage_dealt == pytest.approx(expected_crit_damage, rel=1e-6), (
+        f"tap damage {damage_dealt} != guaranteed-crit damage "
+        f"{expected_crit_damage} — Executioner's Edge did not make the tap a crit")
+    # The override was restored after the tap (the ninja's real
+    # crit_chance is back, not 1.0).
+    assert r.ninja.crit_chance < 1.0, (
+        f"crit_chance not restored after tap: {r.ninja.crit_chance}")
+
+
+def test_executioner_edge_guaranteed_crit_on_auto_attack(pygame_headless):
+    """Executioner's Edge makes every auto-attack a guaranteed crit while timer > 0.
+
+    Complement to the tap test: the auto-attack path (inside ``update``)
+    was already covered, but this locks it in as a regression guard so a
+    future refactor that moves the override out of ``update`` is caught.
+    """
+    from core.state import GameState
+    from engine.runner import Runner
+    state = GameState()
+    r = Runner(state)
+    r._executioner_timer = 5.0
+    from data.enemies import ZONES
+    edef = ZONES[0]["enemies"][0]
+    from engine.enemy import spawn_enemy
+    enemy_hp = 10_000_000.0
+    e = spawn_enemy(edef, hp=enemy_hp, dmg=1.0, gold=1.0)
+    r.world.enemies.append(e)
+    # Run one update tick; the ninja auto-attacks the enemy. With the
+    # fix, the attack is a guaranteed crit, so the damage equals
+    # auto_damage * crit_dmg.
+    r.update(1.0)
+    damage_dealt = enemy_hp - e.hp
+    # The enemy may have been killed (auto-attack + the enemy might be
+    # hit multiple times in one tick); just assert the first hit was a
+    # crit by checking the damage is a multiple of auto_damage * crit_dmg
+    # (not auto_damage * 1.0). If the enemy is dead, the total damage
+    # is at least one crit's worth.
+    expected_crit_damage = r.ninja.auto_damage * r.ninja.crit_dmg
+    assert damage_dealt >= expected_crit_damage, (
+        f"auto-attack damage {damage_dealt} < one crit's worth "
+        f"{expected_crit_damage} — Executioner's Edge did not make auto-attack a crit")
+    # The override was restored after the tick.
+    assert r.ninja.crit_chance < 1.0, (
+        f"crit_chance not restored after update: {r.ninja.crit_chance}")
 
 
 def test_activate_finisher_unknown_fid_noop(pygame_headless):
