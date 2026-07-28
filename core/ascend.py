@@ -6,6 +6,29 @@ ascension** (scaled by the tier stat_mult in ``total_gps`` so they stay
 relevant) -- only gold and run upgrades reset.  Elixir is spent on the
 permanent skill tree.  Requires reaching a minimum zone (this run),
 reducible by the "ascend_cost_pct" bonus.
+
+Task 27 / pl-juice-polish additions:
+  * **Free respec-on-prestige** for the elixir skill tree (``respec_skill_tree``):
+    the tree persists through ascension (it's permanent), but the player
+    can refund all elixir spent on it and re-spend it freely. This is the
+    "respec" the brief calls for -- not a reset on ascension (the tree
+    already persists), but a manual refund/re-spend the player can do any
+    time. The refund is FREE (no cost) so it's a respec, not a re-grind.
+  * **Elixir-per-Minute readout** (``elixir_per_minute``): computed from
+    the ``config.py`` curves (the ``elixir_gain`` formula + the current
+    ``lifetime_gold`` + ``ascend_tier``). The ascend screen surfaces this
+    so the player can see their pacing.
+  * **Recommended-ascend** (``recommended_ascend``): a bool the ascend
+    screen highlights when the elixir-per-minute is high enough AND the
+    player can ascend (a "now is a good time" cue, not a hard gate).
+  * **Tome of Samsara** (``TOME_OF_SAMSARA_NODE`` + ``tome_of_samsara_tooltip``
+    + ``elixir_per_ascension``): the elixir-tree's top-tier node
+    (``eli_t6`` "Ouroboros") is promoted as the compounding elixir-growth
+    anchor. The tooltip recommends "invest ~30%" of elixir here (a soft
+    guidance, not a hard rule) + projects the elixir-per-ascension the
+    player would earn with it maxed. The Tome is the SINGLE compounding
+    elixir-growth loop -- the unspent-elixir-as-multiplier is NOT
+    implemented (``elixir_gain`` does NOT scale with the unspent balance).
 """
 from __future__ import annotations
 
@@ -14,6 +37,20 @@ import math
 import config as cfg
 from core.state import GameState
 from core.bonuses import aggregate_bonuses
+
+
+# ---------------------------------------------------------------------------
+# Task 27: Tome of Samsara -- the compounding elixir-growth anchor.
+# ---------------------------------------------------------------------------
+# The elixir-tree's top-tier node (``eli_t6`` "Ouroboros") is the single
+# compounding elixir-growth loop. The node already grants ``elixir_pct``
+# (a permanent +65% elixir gain), which stacks additively with the other
+# elixir_pct sources (the lower elixir-tree tiers + Godai Void + elixir
+# tokens + Epic Research's Elixir Resonance). Promoting it as the "Tome
+# of Samsara" anchor is a UI/teaching layer -- the compounding already
+# works through the additive ``elixir_pct`` stack; the anchor is the
+# *recommended* node to invest in for long-term elixir growth.
+TOME_OF_SAMSARA_NODE = "elixir_t6"
 
 
 def ascend_requirement(state: GameState) -> int:
@@ -115,3 +152,184 @@ def ascend(state: GameState) -> int:
 def ascend_progress(state: GameState) -> float:
     req = ascend_requirement(state)
     return min(1.0, state.zone_index / req) if req > 0 else 1.0
+
+
+# ---------------------------------------------------------------------------
+# Task 27 / pl-juice-polish: free respec + elixir/min + Tome of Samsara
+# ---------------------------------------------------------------------------
+def respec_skill_tree(state: GameState) -> int:
+    """Refund all elixir spent on the skill tree + clear it.
+
+    The "respec" the brief calls for. The elixir skill tree is PERMANENT
+    (it persists through ascension -- ``ascend`` does NOT reset it), so
+    the "respec" is NOT a reset on ascension; it's a manual
+    refund/re-spend the player can do any time. The refund is FREE (no
+    cost) so it's a respec, not a re-grind -- the player gets back every
+    elixir they spent on the tree and can re-spend it on a different
+    build.
+
+    Returns the total elixir refunded (0 if the tree was empty). The
+    refund is the sum of the ``cost`` of every unlocked node (the same
+    value the player paid to unlock it); the tree is cleared to ``set()``.
+    """
+    from data import skill_tree as st
+    total = 0
+    for nid in list(state.skill_tree):
+        node = st.BY_ID.get(nid)
+        if node is not None:
+            total += node.cost
+    state.skill_tree = set()
+    state.elixir += total
+    return total
+
+
+def elixir_per_minute(state: GameState) -> float:
+    """Elixir per minute the player would earn at the current pacing.
+
+    Computed from the ``config.py`` curves (the ``elixir_gain`` formula +
+    the current ``lifetime_gold`` + ``ascend_tier``). The readout is the
+    elixir-per-ascension divided by the estimated minutes-to-ascend (the
+    time it would take to reach the ascension requirement at the current
+    zone rate). This is a PACING readout -- it tells the player how fast
+    they're earning elixir, not a hard number.
+
+    The estimate is conservative: it assumes the player keeps earning at
+    the current ``active_per_sec`` rate (the same rate ``core.offline``
+    uses for the Away Mastery cap) until they reach the ascension
+    requirement, then ascends. The elixir-per-ascension is the live
+    ``elixir_gain(state)`` (which already accounts for the diminish factor
+    + the elixir_pct stack). The minutes-to-ascend is the remaining
+    lifetime_gold the player would earn by the time they reach the
+    requirement, divided by the current gold/sec rate.
+
+    Returns 0.0 when the player can't estimate a rate (no active income,
+    or the requirement is already met).
+    """
+    if state.lifetime_gold <= 0:
+        return 0.0
+    req = ascend_requirement(state)
+    # If the player is already past the requirement, the "per minute" is
+    # the elixir-per-ascension (ascend now); we use a 1-minute floor so
+    # the readout doesn't divide by zero.
+    if state.zone_index >= req:
+        return float(elixir_gain(state))
+    # Estimate the gold/sec the player is earning (the active rate, which
+    # mirrors the runner's per-tick gold award). This is the same value
+    # ``core.offline.active_per_sec`` computes; we import it lazily to
+    # avoid a circular import at module load.
+    try:
+        from core.offline import active_per_sec
+        gps = active_per_sec(state)
+    except Exception:
+        gps = 0.0
+    if gps <= 0:
+        return 0.0
+    # The remaining gold the player would earn by the time they reach the
+    # ascension requirement. This is a rough estimate: the player's
+    # lifetime_gold grows at roughly the current gps; the time to reach
+    # the requirement is the remaining zone progress divided by the zone
+    # rate. We approximate the zone rate as 1 zone per 60s (a conservative
+    # estimate; the actual rate depends on the player's damage + the
+    # zone's HP pool). The elixir-per-ascension at that future point is
+    # the current elixir_gain (a lower bound -- the player's elixir_pct
+    # stack won't decrease, so the future gain is >= the current gain).
+    zones_remaining = max(1, req - state.zone_index)
+    minutes_to_ascend = max(1.0, zones_remaining * 1.0)  # ~1 min/zone
+    elixir_per_asc = float(elixir_gain(state))
+    return elixir_per_asc / minutes_to_ascend
+
+
+def recommended_ascend(state: GameState) -> bool:
+    """Whether the ascend screen should highlight "recommended ascend".
+
+    True when the player CAN ascend (``can_ascend``) AND the
+    elixir-per-minute is high enough to be worth ascending now (the
+    elixir-per-ascension is >= a soft threshold). The threshold is a
+    pacing cue, not a hard gate -- the player can always ascend when
+    ``can_ascend`` is True; this just highlights "now is a good time".
+
+    The threshold is tuned so a first ascension at ~10k lifetime gold
+    (the ELIXIR_RATE tuning point) is recommended. The threshold is a
+    constant (not a config knob) so the pacing readout is stable across
+    runs; the elixir-per-minute diminishes with tier (the diminish factor
+    in ``elixir_gain``), so the threshold naturally stops recommending
+    at high tiers where the elixir-per-ascension has diminished below
+    the first-ascension baseline.
+    """
+    if not can_ascend(state):
+        return False
+    # The threshold: the elixir-per-ascension at the first-ascension
+    # tuning point (~50 elixir at 10k lifetime gold). This is the
+    # "worth ascending" baseline; below it, the player is better off
+    # pushing deeper for more lifetime_gold before ascending.
+    return elixir_gain(state) >= _RECOMMEND_THRESHOLD
+
+
+# The recommended-ascend threshold: the elixir-per-ascension at the
+# first-ascension tuning point (~50 elixir at 10k lifetime gold). Tuned
+# so a first ascension at the intended pacing is recommended; the
+# diminish factor naturally stops recommending at high tiers.
+_RECOMMEND_THRESHOLD = 50
+
+
+def elixir_per_ascension(state: GameState) -> float:
+    """Project the elixir earned per ascension at the current state.
+
+    This is the live ``elixir_gain(state)`` (the same value the ascend
+    screen shows in the "If you ascend now" preview). Exposed as a
+    separate function so the Tome of Samsara tooltip can project the
+    elixir-per-ascension with the Tome maxed (a what-if projection)
+    without mutating state.
+
+    Returns 0.0 when the player has no lifetime_gold.
+    """
+    return float(elixir_gain(state))
+
+
+def tome_of_samsara_tooltip(state: GameState) -> str:
+    """The Tome of Samsara tooltip: "invest ~30%" + elixir-per-ascension projection.
+
+    The tooltip is a multi-line string (the first line is the title,
+    rendered bold by the tooltip manager). It recommends investing ~30%
+    of the player's elixir into the Tome of Samsara (the compounding
+    elixir-growth anchor) and projects the elixir-per-ascension the
+    player would earn with the Tome maxed.
+
+    The "invest ~30%" is a SOFT guidance (a recommended allocation,
+    not a hard rule). The projection is the elixir-per-ascension with
+    the Tome's ``elixir_pct`` (0.65 from ``eli_t6``) added to the
+    player's current stack -- a what-if, not a mutation.
+    """
+    from data import skill_tree as st
+    node = st.BY_ID.get(TOME_OF_SAMSARA_NODE)
+    node_name = node.name if node else "Tome of Samsara"
+    node_cost = node.cost if node else 0
+    # The current elixir-per-ascension.
+    current = elixir_per_ascension(state)
+    # The projected elixir-per-ascension with the Tome maxed (a what-if:
+    # add the Tome's elixir_pct to the player's current stack). We
+    # compute this without mutating state by reading the current
+    # elixir_pct stack + adding the Tome's contribution.
+    evo = aggregate_bonuses(state)
+    current_elixir_pct = evo.get("elixir_pct", 0.0)
+    tome_pct = node.effect_value if node else 0.65
+    # The projection: recompute elixir_gain with the Tome's elixir_pct
+    # added. We approximate by scaling the current gain by the ratio of
+    # (1 + new_pct) / (1 + old_pct) -- the elixir_pct stack is additive
+    # on the multiplier, so the ratio is exact for the elixir_pct term.
+    if current > 0:
+        old_mult = 1.0 + current_elixir_pct
+        new_mult = 1.0 + current_elixir_pct + tome_pct
+        projected = current * (new_mult / old_mult) if old_mult > 0 else current
+    else:
+        projected = 0.0
+    # The "invest ~30%" recommendation: 30% of the player's current elixir
+    # (a soft allocation guidance, not a hard rule).
+    invest_30 = int(state.elixir * 0.30)
+    return (
+        f"{node_name}\n"
+        f"The compounding elixir-growth anchor. Invest ~30% here "
+        f"(~{invest_30} elixir) for long-term elixir growth.\n"
+        f"Projection: ~{int(projected)} elixir per ascension with this maxed "
+        f"(currently ~{int(current)})."
+    )

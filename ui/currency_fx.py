@@ -10,6 +10,17 @@ pills (Gold / Elixir / Amber / Medals):
 * a **tooltip** — ``tooltip(name)`` returns a description string the
   screen can feed to its hover-tooltip manager.
 
+Task 27 / pl-juice-polish additions:
+  * ``count_up(old, new, duration, t)`` — a free function that animates
+    a currency display from ``old`` to ``new`` over ``duration`` seconds
+    (no instant snapping). The screen uses this to count up the gold
+    pill when the player earns a chunk (e.g. a boss kill, an offline
+    reward) instead of snapping to the new value.
+  * ``gold_milestone_crossed(old, new)`` — returns the highest gold
+    milestone (1k / 10k / 100k / 1M / ...) the player crossed between
+    ``old`` and ``new`` (or None). The screen uses this to celebrate
+    gold milestones (a brief flash + a toast).
+
 All rendering uses pygame primitives + the cached theme fonts.  The
 per-frame hot path performs zero allocations once warm: floater slots
 live in a fixed pool, text surfaces are rendered once at spawn time,
@@ -29,7 +40,74 @@ from typing import Dict, List, Optional, Tuple
 import pygame
 
 from theme import C, font_sm
-from utils import format_number, ease_out_cubic
+from utils import format_number, ease_out_cubic, clamp, ease_in_out_cubic
+
+
+# ---------------------------------------------------------------------------
+# Task 27: Count-up currency + gold milestones
+# ---------------------------------------------------------------------------
+# Gold milestones (the values that trigger a celebration when crossed).
+# Tuned so the first few milestones come quickly (1k, 10k) and the later
+# ones are long-term goals (1M, 1B). The screen celebrates the highest
+# milestone crossed in a single tick (so a boss kill that jumps from 900
+# to 1,100 celebrates the 1k milestone, not the 10k).
+_GOLD_MILESTONES: tuple[float, ...] = (
+    1_000.0,
+    10_000.0,
+    100_000.0,
+    1_000_000.0,
+    10_000_000.0,
+    100_000_000.0,
+    1_000_000_000.0,
+)
+
+
+def count_up(old: float, new: float, duration: float, t: float) -> float:
+    """Animate a currency display from ``old`` to ``new`` over ``duration``.
+
+    Returns the displayed value at time ``t`` (seconds since the count-up
+    started). At ``t=0`` returns ``old``; at ``t>=duration`` returns
+    ``new`` (clamped, no overshoot). Midway, returns an eased value
+    between ``old`` and ``new`` (no instant snapping).
+
+    The easing is ``ease_in_out_cubic`` (a smooth ease-in + ease-out) so
+    the count-up feels snappy at the start + settles at the end, rather
+    than a linear ramp (which feels mechanical) or a pure ease-out (which
+    front-loads the change and feels like a snap).
+
+    ``duration`` <= 0 returns ``new`` immediately (the caller asked for
+    an instant jump, not a count-up). ``old == new`` returns ``old`` (no
+    change to animate).
+    """
+    if duration <= 0 or old == new:
+        return new
+    p = clamp(t / duration, 0.0, 1.0)
+    eased = ease_in_out_cubic(p)
+    return old + (new - old) * eased
+
+
+def gold_milestone_crossed(old: float, new: float) -> Optional[float]:
+    """The highest gold milestone crossed between ``old`` and ``new``.
+
+    Returns the highest value in ``_GOLD_MILESTONES`` that is in the
+    half-open interval (old, new] (i.e. the player was below it at
+    ``old`` and reached it at ``new``). Returns None if no milestone was
+    crossed (e.g. the gain was small, or the player was already past the
+    highest milestone).
+
+    The "highest" is the one the screen celebrates -- a boss kill that
+    jumps from 900 to 1,100 crosses the 1k milestone; a gain from 9,000
+    to 11,000 crosses the 10k milestone (the 1k milestone was already
+    crossed in a previous tick). Returning the highest (not every crossed
+    milestone) keeps the celebration to one per tick.
+    """
+    if new <= old:
+        return None
+    crossed: Optional[float] = None
+    for m in _GOLD_MILESTONES:
+        if old < m <= new:
+            crossed = m
+    return crossed
 
 
 # ---------------------------------------------------------------------------

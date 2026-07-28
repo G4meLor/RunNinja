@@ -10,7 +10,30 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_bar, draw_panel
 from ui.widgets import Button, currency_pill
-from utils import format_number
+from utils import format_number, clamp
+
+
+# ---------------------------------------------------------------------------
+# Task 27 (pl-juice-polish): skill cooldown progress fill + low-HP vignette
+# ---------------------------------------------------------------------------
+# The low-HP threshold (the ninja's HP fraction below which the red
+# vignette ramps in during a boss fight). 0.25 = 25% of max_hp.
+_LOW_HP_THRESHOLD = 0.25
+# The skill cooldown-ready glow duration (seconds). The glow decays over
+# this duration after a cooldown-ready transition.
+_SKILL_GLOW_DUR = 1.0
+# The count-up duration for the gold pill (seconds). The HUD gold counts
+# up from the old value to the new value over this duration (no instant
+# snapping). Tuned so a boss-kill gain feels like a quick count-up (~0.8s)
+# rather than a snap or a slow crawl.
+_GOLD_COUNT_DUR = 0.8
+
+
+def _approach(current: float, target: float, max_delta: float) -> float:
+    """Move ``current`` toward ``target`` by at most ``max_delta``."""
+    if current < target:
+        return min(target, current + max_delta)
+    return max(target, current - max_delta)
 
 
 class GameScreen:
@@ -36,6 +59,37 @@ class GameScreen:
         # Nav buttons.
         self.nav_buttons: list[Button] = []
         self._build_nav()
+        # Task 27 (pl-juice-polish): per-skill cooldown-ready glow timers.
+        # ``_skill_glow[sid]`` is the remaining glow seconds (decays to 0).
+        # ``_skill_was_on_cooldown[sid]`` tracks whether the skill was on
+        # cooldown last tick so the screen can detect the cooldown-ready
+        # transition (the moment the chime + glow fire). The glow is the
+        # visual cue; the chime is the audio cue; both fire once per
+        # cooldown-ready transition (not every tick while ready).
+        self._skill_glow: dict[str, float] = {}
+        self._skill_was_on_cooldown: dict[str, bool] = {}
+        # Task 27: the low-HP red vignette intensity (0..1). Decays to 0
+        # when the ninja is above the low-HP threshold or no boss is
+        # active; ramps to 1 when the ninja is below the threshold AND a
+        # boss is active. The vignette is a VISUAL urgency cue, NOT a boss
+        # enrage timer mechanic (gap #5: no enrage timer, no weak-point-
+        # tap; the boss is auto-killable through normal DPS).
+        self._vignette_intensity: float = 0.0
+        # Task 27: count-up currency display. The HUD gold pill counts up
+        # from the old value to the new value over ``_GOLD_COUNT_DUR``
+        # seconds (no instant snapping). ``_displayed_gold`` is the value
+        # currently shown; ``_gold_count_old`` / ``_gold_count_new`` are
+        # the count-up endpoints; ``_gold_count_t`` is the elapsed time.
+        # When the actual gold changes (a gain), a new count-up starts
+        # from the current displayed value to the new actual value.
+        self._displayed_gold: float = 0.0
+        self._gold_count_old: float = 0.0
+        self._gold_count_new: float = 0.0
+        self._gold_count_t: float = 0.0
+        # Task 27: gold milestone celebration. The screen toasts when a
+        # gold milestone (1k / 10k / 100k / ...) is crossed. The previous
+        # gold value is tracked so the screen can detect the crossing.
+        self._prev_gold: float = 0.0
 
     def _build_nav(self) -> None:
         y = 8
@@ -145,6 +199,95 @@ class GameScreen:
         # Sync the skill FX reduced-motion gate from state each tick
         # (same pattern as the combo_fx gate sync in the runner).
         self.game.runner.skill_fx.reduced_motion = state.reduced_motion
+        # Task 27 (pl-juice-polish): skill cooldown-ready chime + glow.
+        # For each unlocked skill, detect the cooldown-ready transition
+        # (the skill was on cooldown last tick, and is ready this tick).
+        # On the transition: fire the chime (respecting ``sound_on``) +
+        # arm the glow timer (the glow decays over ~1.0s; the visual cue
+        # for the cooldown-ready event). The chime is the audio cue; the
+        # glow is the visual cue (gated by ``reduced_motion`` -- the glow
+        # is a visual flourish; the chime is the non-visual cue for
+        # reduced_motion players).
+        runner = self.game.runner
+        for sid, sk in runner.skills.items():
+            was_on_cd = self._skill_was_on_cooldown.get(sid, False)
+            is_on_cd = sk.timer > 0
+            if was_on_cd and not is_on_cd:
+                # Cooldown-ready transition: fire the chime + arm the glow.
+                from assets import play
+                play("skill_ready", state.sound_on)
+                if not state.reduced_motion:
+                    self._skill_glow[sid] = 1.0  # 1.0s glow
+            self._skill_was_on_cooldown[sid] = is_on_cd
+        # Decay the per-skill glow timers.
+        for sid in list(self._skill_glow.keys()):
+            if self._skill_glow[sid] > 0:
+                self._skill_glow[sid] = max(0.0, self._skill_glow[sid] - dt)
+                if self._skill_glow[sid] <= 0:
+                    del self._skill_glow[sid]
+        # Task 27: low-HP red vignette (a VISUAL urgency cue, NOT a boss
+        # enrage timer mechanic -- gap #5). Ramp the vignette intensity
+        # toward 1.0 when the ninja is below the low-HP threshold (25%
+        # of max_hp) AND a boss is active; decay toward 0 otherwise.
+        # Gated by ``reduced_motion`` (the vignette is a visual flourish;
+        # reduced_motion players get no vignette -- the boss bar + the
+        # ninja's HP bar are the non-visual urgency cues).
+        if not state.reduced_motion:
+            runner = self.game.runner
+            world = runner.world
+            ninja = runner.ninja
+            boss_active = bool(world.boss_active)
+            low_hp = (ninja.max_hp > 0
+                      and ninja.hp / ninja.max_hp < 0.25
+                      and ninja.alive)
+            target = 1.0 if (boss_active and low_hp) else 0.0
+            # Smooth ramp/decay (0.6s ramp, 1.2s decay) so the vignette
+            # eases in/out rather than snapping.
+            rate = 1.66 if target > self._vignette_intensity else 0.83
+            self._vignette_intensity = _approach(
+                self._vignette_intensity, target, dt * rate)
+        else:
+            self._vignette_intensity = 0.0
+        # Task 27: count-up currency display. When the actual gold changes
+        # (a gain), start a new count-up from the current displayed value
+        # to the new actual value. The count-up uses ``count_up`` from
+        # ``ui.currency_fx`` (an eased animation, no instant snapping).
+        # Losses (spending) snap immediately -- the count-up is for gains
+        # only (counting down a loss would feel like a slow drain, which
+        # is worse than a snap).
+        from ui.currency_fx import count_up, gold_milestone_crossed
+        actual_gold = float(state.gold)
+        if actual_gold != self._gold_count_new:
+            if actual_gold > self._gold_count_new:
+                # A gain: start a new count-up from the current displayed
+                # value to the new actual value.
+                self._gold_count_old = self._displayed_gold
+                self._gold_count_new = actual_gold
+                self._gold_count_t = 0.0
+            else:
+                # A loss (spending): snap immediately + re-baseline.
+                self._displayed_gold = actual_gold
+                self._gold_count_old = actual_gold
+                self._gold_count_new = actual_gold
+                self._gold_count_t = _GOLD_COUNT_DUR
+        # Advance the count-up timer + compute the displayed value.
+        if self._gold_count_t < _GOLD_COUNT_DUR:
+            self._gold_count_t = min(_GOLD_COUNT_DUR, self._gold_count_t + dt)
+            self._displayed_gold = count_up(
+                self._gold_count_old, self._gold_count_new,
+                _GOLD_COUNT_DUR, self._gold_count_t)
+        else:
+            self._displayed_gold = self._gold_count_new
+        # Task 27: gold milestone celebration. When a gold milestone (1k /
+        # 10k / 100k / ...) is crossed, toast the milestone (a brief
+        # celebration). The toast is gated by ``sound_on`` (the toast
+        # itself is visual; the chime is the audio cue, played by the
+        # toast -- but we don't play a chime here to avoid stacking with
+        # the skill-ready chime; the toast is the visual cue).
+        crossed = gold_milestone_crossed(self._prev_gold, actual_gold)
+        if crossed is not None:
+            self.notify(f"Gold milestone: {format_number(crossed)}!", C.gold)
+        self._prev_gold = actual_gold
         # Lane scroll.
         self.lane_scroll = (self.lane_scroll + 90 * dt) % 60
         # Toasts.
@@ -275,6 +418,19 @@ class GameScreen:
         if runner.zone_fx.active:
             runner.zone_fx.draw(surf)
 
+        # Task 27 (pl-juice-polish): low-HP red vignette -- a VISUAL
+        # urgency cue when the ninja is below 25% HP during a boss fight.
+        # This is NOT a boss enrage timer mechanic (gap #5: no enrage
+        # timer, no weak-point-tap; the boss is auto-killable through
+        # normal DPS). The vignette is purely visual: a red border that
+        # fades in when the ninja is low AND a boss is active, fades out
+        # otherwise. Gated by ``reduced_motion`` (the ramp/decay is
+        # skipped + the intensity is forced to 0 in ``update`` when
+        # reduced_motion is on; the boss bar + the ninja's HP bar are the
+        # non-visual urgency cues for reduced_motion players).
+        if self._vignette_intensity > 0:
+            self._draw_low_hp_vignette(surf, self._vignette_intensity)
+
         # HUD.
         self._draw_hud(surf, state, world)
 
@@ -306,8 +462,49 @@ class GameScreen:
                              font_md(bold=True), C.text_bad)
 
         # Skill buttons + energy.
-        for b in self.skill_buttons:
+        # Task 27 (pl-juice-polish): draw the cooldown progress fill +
+        # the cooldown-ready glow on each skill button. The cooldown
+        # progress fill is a thin bar at the bottom of the button that
+        # fills from 0 to 1 as the cooldown ticks down (so the player
+        # can see at a glance how close the skill is to ready). The glow
+        # is a brief golden border that fires for ~1.0s when the cooldown
+        # transitions to ready (the visual cue for the cooldown-ready
+        # event; the chime is the audio cue). The glow is gated by
+        # ``reduced_motion`` (the glow is a visual flourish; the chime is
+        # the non-visual cue for reduced_motion players).
+        for i, b in enumerate(self.skill_buttons):
             b.draw(surf)
+            sid = self._skill_button_ids[i] if i < len(self._skill_button_ids) else None
+            if sid is None:
+                continue
+            sk = runner.skills.get(sid)
+            if sk is None:
+                continue
+            # Cooldown progress fill: a thin bar at the bottom of the
+            # button. ``pct`` is the remaining cooldown fraction (1.0 =
+            # just fired, 0.0 = ready). The fill width is the inverse
+            # (1 - pct) so the bar grows as the cooldown ticks down.
+            if sk.cooldown > 0 and sk.timer > 0:
+                pct = clamp(sk.timer / sk.cooldown, 0.0, 1.0)
+                cd_bar = pygame.Rect(b.rect.x + 4, b.rect.bottom - 6,
+                                     b.rect.w - 8, 4)
+                # The fill is the "ready" portion (1 - pct); the bg is
+                # the "remaining" portion (pct). The fill is a bright
+                # accent (C.exp) so it reads as "progress toward ready".
+                draw_bar(surf, cd_bar, 1.0 - pct,
+                         fill=C.exp, bg=C.mp_bg, border=C.panel_border)
+            # Cooldown-ready glow: a golden border that fires for ~1.0s
+            # after the cooldown-ready transition. The glow timer is in
+            # ``self._skill_glow``; the glow fades over the duration.
+            glow_t = self._skill_glow.get(sid, 0.0)
+            if glow_t > 0:
+                a = int(220 * (glow_t / _SKILL_GLOW_DUR))
+                if a > 0:
+                    glow_rect = b.rect.inflate(6, 6)
+                    glow_surf = pygame.Surface(glow_rect.size, pygame.SRCALPHA)
+                    pygame.draw.rect(glow_surf, (255, 220, 120, a),
+                                     glow_surf.get_rect(), 3, border_radius=8)
+                    surf.blit(glow_surf, glow_rect.topleft)
         self.btn_energy.draw(surf)
         # Energy bar above the button.
         ebr = pygame.Rect(cfg.WINDOW_W - 180, cfg.WINDOW_H - 70, 160, 6)
@@ -368,7 +565,13 @@ class GameScreen:
         pygame.draw.rect(surf, C.panel_lo, (0, 0, cfg.WINDOW_W, cfg.HUD_H))
         pygame.draw.line(surf, C.panel_border, (0, cfg.HUD_H), (cfg.WINDOW_W, cfg.HUD_H), 1)
         x = 16; y = 10
-        x += currency_pill(surf, x, y, "Gold", format_number(state.gold), C.gold) + 10
+        # Task 27 (pl-juice-polish): the gold pill uses the count-up
+        # display value (``self._displayed_gold``) instead of the actual
+        # ``state.gold`` so the pill counts up from the old value to the
+        # new value (no instant snapping). The count-up is advanced in
+        # ``update``; here we just read the displayed value.
+        gold_display = getattr(self, "_displayed_gold", float(state.gold))
+        x += currency_pill(surf, x, y, "Gold", format_number(gold_display), C.gold) + 10
         x += currency_pill(surf, x, y, "Elixir", format_number(state.elixir), (120, 220, 200)) + 10
         x += currency_pill(surf, x, y, "Amber", format_number(state.amber), (255, 180, 60)) + 10
         currency_pill(surf, x, y, "Medals", format_number(state.medals), (200, 200, 220))
@@ -420,6 +623,49 @@ class GameScreen:
         self.toasts.append(Toast(text, life=3.0, color=color))
         if len(self.toasts) > 6:
             self.toasts.pop(0)
+
+    # -----------------------------------------------------------------
+    # Task 27 (pl-juice-polish): low-HP red vignette
+    # -----------------------------------------------------------------
+    def _draw_low_hp_vignette(self, surf: pygame.Surface, intensity: float) -> None:
+        """Draw the low-HP red vignette at ``intensity`` (0..1).
+
+        A red border that fades in around the play area when the ninja is
+        below 25% HP during a boss fight. The vignette is a VISUAL urgency
+        cue, NOT a boss enrage timer mechanic (gap #5: no enrage timer,
+        no weak-point-tap; the boss is auto-killable through normal DPS).
+
+        The vignette is a full-screen SRCALPHA overlay with a transparent
+        centre + a red border that fades in as the intensity ramps. The
+        border width + alpha scale with the intensity so the vignette
+        eases in (and out, when the ninja heals above the threshold or
+        the boss dies). Cached per-frame is fine -- the vignette is only
+        drawn while the intensity > 0, which is a transient state.
+        """
+        if intensity <= 0:
+            return
+        # The vignette: a full-screen red overlay with a transparent
+        # centre. We draw four red rectangles around the play area (the
+        # border) with an alpha that scales with the intensity. The
+        # border width is ~24px at full intensity (a clear "danger"
+        # frame without obscuring the play area).
+        a = int(180 * intensity)
+        if a <= 0:
+            return
+        bw = int(24 * intensity)
+        if bw <= 0:
+            return
+        overlay = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+        # Top + bottom + left + right borders.
+        pygame.draw.rect(overlay, (200, 30, 40, a),
+                         (0, 0, cfg.WINDOW_W, bw))
+        pygame.draw.rect(overlay, (200, 30, 40, a),
+                         (0, cfg.WINDOW_H - bw, cfg.WINDOW_W, bw))
+        pygame.draw.rect(overlay, (200, 30, 40, a),
+                         (0, 0, bw, cfg.WINDOW_H))
+        pygame.draw.rect(overlay, (200, 30, 40, a),
+                         (cfg.WINDOW_W - bw, 0, bw, cfg.WINDOW_H))
+        surf.blit(overlay, (0, 0))
 
     # -----------------------------------------------------------------
     # Tap rhythm display + synergy arc (Task 25 / gp-skill-synergy-rhythm)

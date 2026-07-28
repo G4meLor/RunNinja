@@ -1,4 +1,20 @@
-"""Ascension screen: prestige ladder + confirm."""
+"""Ascension screen: prestige ladder + confirm.
+
+Task 27 / pl-juice-polish additions:
+  * **Elixir-per-Minute readout**: a pacing readout computed from the
+    ``config.py`` curves (the ``elixir_gain`` formula + the current
+    ``lifetime_gold`` + ``ascend_tier``). The readout tells the player
+    how fast they're earning elixir (a pacing cue, not a hard number).
+  * **Recommended-ascend highlight**: the "If you ascend now" panel is
+    highlighted (a golden border) when ``recommended_ascend`` is True --
+    the elixir-per-ascension is high enough to be worth ascending now.
+  * **Tome of Samsara section**: a panel that promotes the elixir-tree's
+    top-tier node (``elixir_t6`` "Ouroboros") as the compounding
+    elixir-growth anchor, with an "invest ~30%" tooltip + an
+    "elixir per ascension" projection. The Tome is the SINGLE compounding
+    elixir-growth loop (the unspent-elixir-as-multiplier is NOT
+    implemented).
+"""
 from __future__ import annotations
 
 import pygame
@@ -78,16 +94,62 @@ class AscendScreen:
         draw_text(surf, f"Zone: {state.zone_index + 1}  ·  Combo: {state.combo}", (r.x + 20, r.y + 82), font_sm(), C.text_dim)
         draw_text(surf, f"Ascensions: {state.total_ascensions}", (r.x + 20, r.y + 100), font_sm(), C.text_dim)
 
-        # Elixir preview.
+        # Elixir-per-Minute readout (Task 27 / pl-juice-polish): a pacing
+        # readout computed from the config.py curves. The readout tells the
+        # player how fast they're earning elixir (a pacing cue, not a hard
+        # number). Computed by ``asc.elixir_per_minute(state)``.
+        epm = asc.elixir_per_minute(state)
+        epm_rect = pygame.Rect(cfg.WINDOW_W // 2 - 240, 250, 480, 36)
+        draw_panel(surf, epm_rect, fill=C.panel, border=C.panel_border)
+        draw_text(surf, "Elixir / min:", (epm_rect.x + 16, epm_rect.y + 8),
+                  font_sm(), C.text_dim)
+        draw_text(surf, format_number(epm), (epm_rect.x + 130, epm_rect.y + 8),
+                  font_md(bold=True), (120, 220, 200))
+
+        # Elixir preview (with recommended-ascend highlight).
         gain = asc.elixir_gain(state)
-        pr = pygame.Rect(cfg.WINDOW_W // 2 - 240, 250, 480, 80)
-        draw_panel(surf, pr, fill=C.panel, border=C.panel_border_hi)
+        recommended = asc.recommended_ascend(state)
+        pr = pygame.Rect(cfg.WINDOW_W // 2 - 240, 296, 480, 80)
+        # Task 27: highlight the panel (a golden border) when the ascend
+        # is recommended (the elixir-per-ascension is high enough + the
+        # player can ascend). The highlight is a soft cue, not a hard
+        # gate -- the player can always ascend when ``can_ascend`` is True.
+        border_color = C.gold if recommended else C.panel_border_hi
+        draw_panel(surf, pr, fill=C.panel, border=border_color,
+                   border_w=2 if recommended else 1)
         draw_text_center(surf, "If you ascend now:", (pr.centerx, pr.y + 14), font_xs(), C.text_dim)
-        draw_text_center(surf, f"+{gain} Elixir", (pr.centerx, pr.y + 40), font_xl(bold=True), (120, 220, 200))
+        gain_color = C.gold if recommended else (120, 220, 200)
+        draw_text_center(surf, f"+{gain} Elixir", (pr.centerx, pr.y + 40),
+                         font_xl(bold=True), gain_color)
+        if recommended:
+            draw_text_center(surf, "Recommended!", (pr.centerx, pr.y + 64),
+                             font_xs(bold=True), C.gold)
+
+        # Tome of Samsara (Task 27): the compounding elixir-growth anchor.
+        # A panel that promotes the elixir-tree's top-tier node
+        # (``elixir_t6`` "Ouroboros") as the compounding anchor, with an
+        # "invest ~30%" tooltip + an "elixir per ascension" projection.
+        # The Tome is the SINGLE compounding elixir-growth loop (the
+        # unspent-elixir-as-multiplier is NOT implemented).
+        tome_tip = asc.tome_of_samsara_tooltip(state)
+        tome_rect = pygame.Rect(cfg.WINDOW_W // 2 - 240, 386, 480, 70)
+        tome_border = (120, 220, 200) if asc.TOME_OF_SAMSARA_NODE in state.skill_tree else C.panel_border
+        draw_panel(surf, tome_rect, fill=C.panel, border=tome_border, border_w=2)
+        draw_text(surf, "Tome of Samsara", (tome_rect.x + 16, tome_rect.y + 8),
+                  font_md(bold=True), (120, 220, 200))
+        # The tooltip's first line is the title (already drawn); the rest
+        # is the body (the "invest ~30%" guidance + the projection).
+        tip_lines = tome_tip.split("\n")
+        if len(tip_lines) > 1:
+            draw_text(surf, tip_lines[1], (tome_rect.x + 16, tome_rect.y + 32),
+                      font_xs(), C.text_dim)
+        if len(tip_lines) > 2:
+            draw_text(surf, tip_lines[2], (tome_rect.x + 16, tome_rect.y + 50),
+                      font_xs(), C.text_dim)
 
         # Requirement.
         req = asc.ascend_requirement(state)
-        rr = pygame.Rect(cfg.WINDOW_W // 2 - 240, 350, 480, 60)
+        rr = pygame.Rect(cfg.WINDOW_W // 2 - 240, 470, 480, 60)
         draw_panel(surf, rr, fill=C.panel, border=C.panel_border)
         draw_text(surf, f"Required: zone {req} (you are at zone {state.zone_index + 1})",
                   (rr.x + 16, rr.y + 12), font_md(), C.text)

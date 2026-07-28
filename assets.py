@@ -332,6 +332,12 @@ def init_sfx():
         # reduced_motion players (the visual rhythm display is suppressed
         # when reduced_motion is on; the tick is the alternative cue).
         _SFX["tick"] = _make_tone(880, 0.03, 0.08, 30)
+        # Task 27 (pl-juice-polish): a soft, high-pitched chime for the
+        # skill cooldown-ready cue. The chime respects ``sound_on`` (the
+        # screen passes ``state.sound_on`` to ``play``); the visual glow
+        # + cooldown progress fill are the non-visual cues for
+        # ``reduced_motion`` players (the chime is the audio cue).
+        _SFX["skill_ready"] = _make_sweep(600, 1200, 0.25, 0.20)
         _SFX_OK = True
     except Exception:
         _SFX_OK = False
