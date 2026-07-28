@@ -32,13 +32,23 @@ import config as cfg
 # Soft-pity ramp
 # ---------------------------------------------------------------------------
 def test_soft_pity_increases_legendary_rate(pygame_headless):
-    """After 150 pulls without a legendary, the legendary rate climbs."""
+    """After 150 pulls without a legendary, the legendary rate climbs.
+
+    With the DECOUPLED counters, the realistic state that exercises the
+    legendary ramp is one where the legendary counter is high but the
+    rare/epic counters are low (because recent rare/epic drops reset
+    them). This is the state the decoupling makes reachable: the
+    legendary counter accumulates across rare/epic drops, so it can
+    reach 150 while the rare/epic counters are near 0.
+    """
     from core.state import GameState
     from core.gacha import pull_rates
     state = GameState()
     base = pull_rates(state)["legendary"]
-    # 160 pulls since last legendary -- past the 150 threshold.
-    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 160, "mythic": 0}
+    # 160 pulls without a legendary, but recent rare/epic drops reset
+    # the rare/epic counters. This is the realistic state the decoupling
+    # enables (the legendary counter accumulates across rare/epic drops).
+    state.pet_pity = {"rare": 5, "epic": 5, "legendary": 160, "mythic": 160}
     ramped = pull_rates(state)["legendary"]
     assert ramped > base
     # The ramp is significant: 0.025 + (160 - 150) * 0.02 = 0.225 before
@@ -52,8 +62,10 @@ def test_soft_pity_below_threshold_is_base(pygame_headless):
     from core.gacha import pull_rates
     state = GameState()
     base = pull_rates(state)["legendary"]
-    # 100 pulls -- below the 150 legendary threshold.
-    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 100, "mythic": 0}
+    # 100 pulls -- below the 150 legendary threshold. The rare/epic
+    # counters are also below their thresholds (or we use a state
+    # where the rare/epic ramps don't fire, e.g. recent drops reset them).
+    state.pet_pity = {"rare": 5, "epic": 5, "legendary": 100, "mythic": 100}
     assert pull_rates(state)["legendary"] == pytest.approx(base)
 
 
@@ -62,24 +74,56 @@ def test_soft_pity_ramp_increases_with_pulls(pygame_headless):
     from core.state import GameState
     from core.gacha import pull_rates
     state = GameState()
-    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 160, "mythic": 0}
+    state.pet_pity = {"rare": 5, "epic": 5, "legendary": 160, "mythic": 160}
     r160 = pull_rates(state)["legendary"]
     state.pet_pity["legendary"] = 180
     r180 = pull_rates(state)["legendary"]
     assert r180 > r160
 
 
-def test_soft_pity_resets_on_rare_plus(pygame_headless):
-    """A rare+ pull resets the rare+ pity counters (rare/epic/legend/mythic)."""
+def test_soft_pity_resets_on_legendary_or_mythic(pygame_headless):
+    """A legendary or mythic drop resets the legendary counter.
+
+    With the DECOUPLED counters, a rare drop does NOT reset the
+    legendary counter (only the rare counter). An epic drop resets
+    rare + epic but NOT legendary. A legendary drop resets
+    rare/epic/legendary. A mythic drop resets all.
+    """
     from core.state import GameState
     from core.gacha import pull_rates
     state = GameState()
-    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 160, "mythic": 0}
+    # 160 pulls without a legendary -- the legendary rate is ramped.
+    state.pet_pity = {"rare": 5, "epic": 5, "legendary": 160, "mythic": 160}
     assert pull_rates(state)["legendary"] > cfg.GACHA_RATES["legendary"]
-    # Simulate a legendary drop -- the legendary + epic + rare counters
-    # reset (rare+ pity ladder resets together).
-    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 0, "mythic": 0}
+    # A legendary drop resets the legendary (and rare + epic) counter.
+    state.pet_pity = {"rare": 0, "epic": 0, "legendary": 0, "mythic": 160}
     assert pull_rates(state)["legendary"] == pytest.approx(cfg.GACHA_RATES["legendary"])
+
+
+def test_rare_drop_does_not_reset_legendary_counter(pygame_headless):
+    """A rare drop resets the rare counter but NOT the legendary counter.
+
+    This is the key decoupling: the legendary counter accumulates across
+    rare/epic drops so the legendary soft-pity ramp can actually fire.
+    """
+    from core.state import GameState
+    from core import gacha
+    state = GameState()
+    state.amber = 1000000
+    state.pet_pity = {"rare": 160, "epic": 160, "legendary": 160, "mythic": 160}
+    # Force a rare drop by pulling until we get one.
+    import utils
+    utils.seed(42)
+    rare_found = False
+    for _ in range(200):
+        r = gacha.pull(state)
+        if r.rarity == "rare":
+            rare_found = True
+            break
+    assert rare_found
+    # The rare drop reset the rare counter, but the legendary counter
+    # should NOT have been reset (it only resets on legendary/mythic).
+    assert state.pet_pity.get("legendary", 0) > 0
 
 
 # ---------------------------------------------------------------------------

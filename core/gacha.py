@@ -93,9 +93,15 @@ def pull_rates(state: GameState) -> dict[str, float]:
     to 1.0 so the roll is a valid probability distribution.
 
     The pity counters live in ``state.pet_pity`` (a ``rarity -> pulls
-    since last drop`` dict). A rare+ drop resets the rare+ ladder
-    (rare/epic/legendary/mythic all reset together, since the ladder is
-    nested: a rare drop also satisfies the epic+ condition).
+    since last drop`` dict) and are DECOUPLED: a drop at rarity R resets
+    the counter for R and all *lower* rarities (in the "at least this
+    rarity" sense), but NOT for higher rarities. So a rare drop resets
+    only the rare counter; an epic drop resets rare + epic; a legendary
+    drop resets rare/epic/legendary; a mythic drop resets all. This lets
+    the legendary counter accumulate across rare/epic drops so the
+    legendary soft-pity ramp can actually fire after 150 pulls without a
+    legendary -- the rare ramp no longer resets the ladder at ~20-30
+    pulls and short-circuits the legendary grind.
     """
     base = dict(cfg.GACHA_RATES)
     pity = state.pet_pity
@@ -160,16 +166,13 @@ def pull(state: GameState) -> PetPullResult:
     # Early-pity guarantee: in the first EARLY_PITY_WINDOW pulls of a new
     # banner, force at least one rare+ (one-time-per-banner). We track
     # this via banner_pulls: if we're in the first 10 pulls and no rare+
-    # has been seen yet, force one. The "no rare+ yet" check is implicit
-    # in the pet_pity counters -- if all rare+ counters are at
-    # banner_pulls, we haven't seen a rare+ this banner. Simpler: we
-    # check whether any rare+ has been seen this banner by testing
-    # whether the rare+ pity counters are all equal to banner_pulls
-    # (meaning every pull so far was common). To avoid edge cases at
-    # pull 0, we check banner_pulls > 0 and < EARLY_PITY_WINDOW.
+    # has been seen yet, force one. With the decoupled counters, "no
+    # rare+ seen yet" means the rare counter equals banner_pulls (a
+    # rare+ drop would have reset the rare counter). We check the rare
+    # counter specifically (not all rare+ counters) because a rare drop
+    # doesn't reset the epic/legendary/mythic counters.
     if (0 < state.banner_pulls < cfg.EARLY_PITY_WINDOW
-            and all(state.pet_pity.get(r, 0) == state.banner_pulls
-                    for r in ("rare", "epic", "legendary", "mythic"))):
+            and state.pet_pity.get("rare", 0) == state.banner_pulls):
         # We're in the first 10 pulls and every pull so far was common.
         # Force a rare+ this pull (the guarantee).
         rare_plus_pool = [p for p in eligible if _rarity_of(p) != "common"]
@@ -228,15 +231,30 @@ def pull(state: GameState) -> PetPullResult:
             state.pet_stars[chosen.id] = stars + 1
             star_up = True
     # Advance the per-rarity pity counters.
-    # A rare+ drop resets the rare+ ladder (rare/epic/legendary/mythic)
-    # because the ladder is nested: a rare drop also satisfies epic+.
+    # The counters are DECOUPLED (not a single rare+ ladder): a drop at
+    # rarity R resets the counter for R and all *lower* rarities (in the
+    # "at least this rarity" sense), but NOT for higher rarities. So:
+    #   rare drop    -> reset rare
+    #   epic drop    -> reset rare + epic
+    #   legendary drop -> reset rare + epic + legendary
+    #   mythic drop  -> reset rare + epic + legendary + mythic
+    # This lets the legendary counter accumulate across rare/epic drops
+    # (which happen often) so the legendary soft-pity ramp can actually
+    # fire after 150 pulls without a legendary -- the rare ramp no longer
+    # resets the ladder at ~20-30 pulls and short-circuits the legendary
+    # grind. A common pull increments all rare+ counters.
+    _RARITY_ORDER = ("common", "rare", "epic", "legendary", "mythic")
+    drop_idx = _RARITY_ORDER.index(rarity)
     pity = state.pet_pity
-    if rarity in ("rare", "epic", "legendary", "mythic"):
-        for r in ("rare", "epic", "legendary", "mythic"):
+    for i, r in enumerate(_RARITY_ORDER):
+        if r == "common":
+            continue
+        if i <= drop_idx:
+            # This rarity or a lower one -- reset (the drop satisfies
+            # "at least this rarity").
             pity[r] = 0
-    else:
-        # common: increment all rare+ counters (no rare+ this pull).
-        for r in ("rare", "epic", "legendary", "mythic"):
+        else:
+            # A higher rarity -- increment (no drop at this rarity).
             pity[r] = pity.get(r, 0) + 1
     state.pet_pulls += 1
     state.banner_pulls += 1
@@ -306,7 +324,10 @@ def spark_shop_trade(state: GameState, pid: str) -> bool:
         stars = state.pet_stars.get(pid, 0)
         if stars < pet_def.PET_STAR_MAX:
             state.pet_stars[pid] = stars + 1
-    # Reset the rare+ pity ladder (the trade counts as a drop).
+    # Reset the rare+ pity ladder (the trade counts as a rare+ drop, so
+    # it resets rare/epic/legendary/mythic per the decoupled-counter
+    # rule -- the trade gives a guaranteed pet, which is at least rare
+    # in the player's eyes, so the full ladder resets).
     pity = state.pet_pity
     for r in ("rare", "epic", "legendary", "mythic"):
         pity[r] = 0
