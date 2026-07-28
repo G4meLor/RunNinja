@@ -56,7 +56,24 @@ class Ninja:
 
 
 def compute_ninja_stats(state: GameState) -> dict:
-    """Compute the ninja's effective combat stats from state."""
+    """Compute the ninja's effective combat stats from state.
+
+    Stacking order (documented in ``config.MAX_TOTAL_DAMAGE_MULT``):
+      base
+        * tier_mult          (ascension tier stat_mult, 1.6 ** tier)
+        * run upgrades       (tap_power, tap_mult, auto_attack, ...)
+        * evo                (skill tree + pets + dojo + heritage, additive pct)
+        * godai_element      (Godai Elements branch, %-on-base in each stat)
+      then clamped per-stat.
+
+    The dojo + heritage buffs are ADDITIVE pct on the base stat, layered
+    alongside the skill-tree/pet bonuses in ``evo``. Each dojo buffs its
+    mapped stat (tap for iaijutsu, auto for kage_bunshin, crit_dmg for
+    shikigami, attack_speed for kusari_gama); Earth heritage buffs
+    max_hp (utility/defense flavor). The buffs compose cleanly with the
+    Godai element multipliers (which are %-on-base in their own stats)
+    because each layer touches its own stat -- no interference.
+    """
     evo = aggregate_bonuses(state)
     # Ascension tier multiplier (the prestige ladder's stat_mult).
     tier_mult = _ascend_tier_mult(state)
@@ -77,6 +94,36 @@ def compute_ninja_stats(state: GameState) -> dict:
     max_hp = (100.0 + _upgrade_value(state, "vitality")) * (1.0 + evo.get("godai_water", 0.0)) * tier_mult
     # Defense: reduces incoming damage (run upgrade + godai_water).
     defense = _upgrade_value(state, "defense")
+
+    # ---- Build specialization (Dojos) + Heritage ----
+    # Each dojo adds a flat pct to its mapped stat. The buffs are
+    # ADDITIVE on the base stat (never a multiplier on a multiplier), so
+    # they compose cleanly with the Godai element multipliers above
+    # (which are %-on-base in their own stats). Specialization is NOT
+    # mutually-exclusive: a generalist (no dojo) is viable; choosing a
+    # dojo only ADDS to the chosen stat, never reduces another.
+    dojo_kage_bunshin = evo.get("dojo_kage_bunshin", 0.0)  # idle -> auto
+    dojo_iaijutsu = evo.get("dojo_iaijutsu", 0.0)          # tap-burst -> tap
+    dojo_shikigami = evo.get("dojo_shikigami", 0.0)        # summon -> crit_dmg
+    dojo_kusari_gama = evo.get("dojo_kusari_gama", 0.0)    # multi-hit -> attack_speed
+    auto_damage *= (1.0 + dojo_kage_bunshin)
+    tap_damage *= (1.0 + dojo_iaijutsu)
+    crit_dmg += dojo_shikigami  # crit_dmg is a flat multiplier (1.5 + bonuses), so add flat
+    attack_speed *= (1.0 + dojo_kusari_gama * 0.5)  # mirror the speed_pct 0.5 factor
+
+    # Heritage passives: each collected heritage adds a small permanent
+    # buff to its mapped stat. Same mapping as the dojos, plus Earth
+    # (the generalist's utility/defense heritage) which buffs max_hp.
+    heritage_kage_bunshin = evo.get("heritage_kage_bunshin", 0.0)
+    heritage_iaijutsu = evo.get("heritage_iaijutsu", 0.0)
+    heritage_shikigami = evo.get("heritage_shikigami", 0.0)
+    heritage_kusari_gama = evo.get("heritage_kusari_gama", 0.0)
+    heritage_earth = evo.get("heritage_earth", 0.0)
+    auto_damage *= (1.0 + heritage_kage_bunshin)
+    tap_damage *= (1.0 + heritage_iaijutsu)
+    crit_dmg += heritage_shikigami
+    attack_speed *= (1.0 + heritage_kusari_gama * 0.5)
+    max_hp *= (1.0 + heritage_earth)
 
     return {
         "tap_damage": max(1.0, tap_damage),

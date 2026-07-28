@@ -95,11 +95,77 @@ def _pets_passive_provider(state: GameState) -> dict[str, float]:
     return out
 
 
+# Build specialization (Dojos) -- the per-ascension damage-path commit.
+# The 4 Dojos map to the 4 Godai elements (Kage-bunshin->Void,
+# Iaijutsu->Wind, Shikigami->Fire, Kusari-gama->Water); Earth is the
+# generalist's utility/defense heritage. Specialization is ADDITIVE
+# (buffs toward the chosen path), NOT a mutually-exclusive capstone -- a
+# generalist default (dojo == "none") is viable, and respec is free (the
+# player can change dojo any time; the only cost is re-earning any
+# heritage already collected, which is a no-op since heritage is a set).
+#
+# The provider emits an additive ``dojo_<id>`` bonus the engine folds
+# into the appropriate stat in ``compute_ninja_stats``. The stacking
+# order is documented in config.MAX_TOTAL_DAMAGE_MULT: the dojo buff is
+# an additive pct on the base stat, layered BEFORE the Godai element
+# multipliers (which are %-on-base in their respective stats), so the
+# two compose cleanly without interference.
+_DOJO_BUFF = 0.15  # +15% additive buff toward the chosen path's stat
+
+
+def _dojo_provider(state: GameState) -> dict[str, float]:
+    """Per-ascension dojo commit: an additive buff toward the chosen path.
+
+    ``state.dojo`` is one of ``none``, ``kage_bunshin``, ``iaijutsu``,
+    ``shikigami``, ``kusari_gama``. ``none`` (the generalist) emits no
+    buff -- the generalist default is fully viable without a dojo. Each
+    named dojo emits a ``dojo_<id>`` key the engine reads in
+    ``compute_ninja_stats`` and folds into the path's stat (tap for
+    iaijutsu, auto for kage_bunshin, crit_dmg for shikigami, attack_speed
+    for kusari_gama). The buff is ADDITIVE (a flat pct on the base
+    stat), NOT a mutually-exclusive capstone -- choosing a dojo never
+    reduces another stat, so hybrids stay viable.
+    """
+    out: dict[str, float] = {}
+    if state.dojo == "none":
+        return out
+    out[f"dojo_{state.dojo}"] = _DOJO_BUFF
+    return out
+
+
+# Heritage passives -- the "collect all 5" meta-goal. Each heritage is
+# granted once (the first ascension under that dojo) and persists across
+# all future ascensions as a small permanent buff. The 5 heritages are
+# the 4 dojos + Earth (the generalist's utility/defense heritage). The
+# provider emits a ``heritage_<id>`` key per collected heritage; the
+# engine folds each into its mapped stat (the same stat the dojo buffs,
+# except Earth which buffs max_hp -- the utility/defense flavor).
+_HERITAGE_BUFF = 0.10  # +10% permanent buff per collected heritage
+
+
+def _heritage_provider(state: GameState) -> dict[str, float]:
+    """Permanent heritage passives, one per collected heritage.
+
+    ``state.heritage`` is a set of dojo ids the player has ascended
+    under at least once (plus ``"earth"`` for the generalist). Each
+    heritage emits a ``heritage_<id>`` key the engine folds into its
+    mapped stat in ``compute_ninja_stats``. The buffs are ADDITIVE on the
+    existing stat keys, so they stack cleanly with the dojo + Godai
+    layers without interference.
+    """
+    out: dict[str, float] = {}
+    for h in state.heritage:
+        out[f"heritage_{h}"] = _HERITAGE_BUFF
+    return out
+
+
 # Register the built-in providers. Order does not matter — contributions
 # are summed additively by key.
 register_provider(_skill_tree_provider)
 register_provider(_pets_provider)
 register_provider(_pets_passive_provider)
+register_provider(_dojo_provider)
+register_provider(_heritage_provider)
 
 
 def aggregate_bonuses(state: GameState) -> dict[str, float]:

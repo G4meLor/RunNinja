@@ -63,6 +63,13 @@ def ascend(state: GameState) -> int:
     combo, and energy reset.  The ``start_farms`` skill-tree perk
     guarantees a minimum farm count (it raises low farm counts to the
     perk value rather than overwriting a higher existing count).
+
+    Heritage: completing a full ascension under a Dojo grants that
+    dojo's heritage passive (a one-time per-dojo unlock). The generalist
+    (``dojo == "none"``) grants the Earth heritage. Heritage is a set,
+    so ascending twice under the same dojo doesn't duplicate the entry;
+    the player can respec dojo freely between ascensions and collect all
+    5 heritages (4 dojos + Earth) as the meta-goal.
     """
     if not can_ascend(state):
         return 0
@@ -90,6 +97,13 @@ def ascend(state: GameState) -> int:
         cur = state.building_level("farm")
         if cur < start_farms:
             state.buildings["farm"] = start_farms
+    # Heritage: grant the dojo's heritage passive (one-time per dojo).
+    # The generalist (no dojo) grants the Earth heritage -- the
+    # utility/defense flavor, the 5th in the "collect all 5" meta-goal.
+    if state.dojo == "none":
+        state.heritage.add("earth")
+    else:
+        state.heritage.add(state.dojo)
     return gained
 
 

@@ -119,6 +119,23 @@ _EXTRA_NODES = [
      "unlock_rope", 1.0, "Unlock Rope Hook (instant-kill weak enemies)."),
     ("ab_speed", "Speed Step", "abilities", 150, "ab_kunai",
      "unlock_speed", 1.0, "Unlock Speed Step (attack/move burst)."),
+    # Dojo nodes — the abilities-branch fork where the player commits to
+    # one damage path per ascension. Each dojo maps to a Godai element
+    # (Kage-bunshin->Void, Iaijutsu->Wind, Shikigami->Fire,
+    # Kusari-gama->Water); Earth is the generalist's utility/defense
+    # heritage. The nodes themselves grant a small permanent additive buff
+    # toward their stat; the bigger per-ascension buff comes from the
+    # dojo provider reading ``state.dojo`` (respec is free -- the player
+    # can change dojo any time). Specialization is ADDITIVE (buffs toward
+    # the chosen path), NOT a mutually-exclusive capstone.
+    ("dojo_kage_bunshin", "Kage-bunshin Dojo", "abilities", 120, "ab_root",
+     "atk_pct", 0.05, "+5% auto-attack. Idle shadow-clone path (Void)."),
+    ("dojo_iaijutsu", "Iaijutsu Dojo", "abilities", 120, "ab_root",
+     "tap_pct", 0.05, "+5% tap damage. Quick-draw tap-burst path (Wind)."),
+    ("dojo_shikigami", "Shikigami Dojo", "abilities", 120, "ab_root",
+     "crit_dmg_pct", 0.05, "+5% crit damage. Spirit-summon path (Fire)."),
+    ("dojo_kusari_gama", "Kusari-gama Dojo", "abilities", 120, "ab_root",
+     "speed_pct", 0.05, "+5% attack speed. Chain multi-hit path (Water)."),
     # Godai gate — unlocks the element branch.
     ("godai_gate", "Godai Elements", "godai", 1000, "eli_root",
      "unlock_godai", 1.0, "Unlock the Godai Elements sub-tree."),

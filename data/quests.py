@@ -92,4 +92,8 @@ ACHIEVEMENTS: list[Achievement] = [
                 lambda s: s.lifetime_gold >= 1e6, reward_amber=10, reward_medals=100),
     Achievement("gold_1b", "Croesus", "Earn 1 billion gold total.",
                 lambda s: s.lifetime_gold >= 1e9, reward_amber=50, reward_medals=500),
+    # Heritage collection meta-goal: 4 dojos + Earth = 5 heritages.
+    Achievement("heritage_all", "Five Ways Master",
+                "Collect all 5 heritages (4 Dojos + Earth).",
+                lambda s: len(s.heritage) >= 5, reward_amber=100, reward_medals=1000),
 ]
