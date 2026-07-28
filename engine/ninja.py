@@ -125,6 +125,24 @@ def compute_ninja_stats(state: GameState) -> dict:
     attack_speed *= (1.0 + heritage_kusari_gama * 0.5)
     max_hp *= (1.0 + heritage_earth)
 
+    # ---- Stacking tokens (gp-permanent-scaling) ----
+    # Each token of a kind is +1% (0.01) to that kind's stat. The keys
+    # are distinct from the skill-tree/pet keys above so they stack
+    # additively without collision. Tokens are permanent (survive ALL
+    # prestige layers) and sourced from daily quests + zone-boss
+    # milestones (NOT achievements -- the Heritage passives read
+    # ``state.achievements``; tokens read ``state.tokens`` -- distinct
+    # sources, no double-counting).
+    strike_token = evo.get("strike_token_pct", 0.0)  # tap damage
+    crit_token = evo.get("crit_token_pct", 0.0)     # crit chance
+    coin_token = evo.get("coin_token_pct", 0.0)     # gold (applied in gold_mult)
+    elixir_token = evo.get("elixir_token_pct", 0.0)  # elixir gain (applied in elixir_gain)
+    tap_damage *= (1.0 + strike_token)
+    crit_chance += crit_token
+    # coin_token + elixir_token are consumed in the runner's gold_mult and
+    # core.ascend.elixir_gain (they read evo directly); they do NOT fold
+    # into the combat stats here. Expose them in the returned dict so the
+    # UI / tests can read the effective token contribution.
     return {
         "tap_damage": max(1.0, tap_damage),
         "auto_damage": max(1.0, auto_damage),
@@ -133,6 +151,13 @@ def compute_ninja_stats(state: GameState) -> dict:
         "crit_dmg": max(1.0, crit_dmg),
         "max_hp": max(1.0, max_hp),
         "defense": max(0.0, defense),
+        # Token contributions (gp-permanent-scaling) -- exposed for the
+        # UI / tests. coin_token + elixir_token are consumed by the
+        # runner's gold_mult and core.ascend.elixir_gain respectively.
+        "strike_token_pct": strike_token,
+        "crit_token_pct": crit_token,
+        "coin_token_pct": coin_token,
+        "elixir_token_pct": elixir_token,
     }
 
 

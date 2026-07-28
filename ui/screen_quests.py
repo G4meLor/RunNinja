@@ -68,8 +68,15 @@ class QuestsScreen:
             unlocked = a.id in state.achievements
             r = pygame.Rect(60, y, 560, 24)
             col = C.text_good if unlocked else C.text_muted
-            draw_text(surf, ("✓ " if unlocked else "○ ") + a.name + "  —  " + a.desc,
-                      (r.x, r.y), font_xs(), col)
+            # Hidden/secret achievements (gp-permanent-scaling): show the
+            # cryptic hint (not the full desc) until unlocked -- the
+            # player has an in-game path to the unlock that is NOT
+            # wiki-dependent. After unlock, show the full name + desc.
+            if getattr(a, "hidden", False) and not unlocked:
+                label = "?  " + a.hint
+            else:
+                label = ("✓ " if unlocked else "○ ") + a.name + "  —  " + a.desc
+            draw_text(surf, label, (r.x, r.y), font_xs(), col)
             y += 26
 
         for b in self.buttons:

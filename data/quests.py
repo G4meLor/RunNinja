@@ -51,6 +51,13 @@ class Achievement:
     check: Callable
     reward_amber: int = 0
     reward_medals: int = 0
+    # Hidden/secret achievements (gp-permanent-scaling): the ``desc`` is
+    # shown only after unlock; before that, the ``hint`` (a cryptic
+    # in-game teaser) is shown instead so the player has an in-game path
+    # to the unlock that is NOT wiki-dependent. ``hidden`` controls the
+    # display only (the ``check`` still fires normally).
+    hidden: bool = False
+    hint: str = ""
 
 
 ACHIEVEMENTS: list[Achievement] = [
@@ -96,4 +103,28 @@ ACHIEVEMENTS: list[Achievement] = [
     Achievement("heritage_all", "Five Ways Master",
                 "Collect all 5 heritages (4 Dojos + Earth).",
                 lambda s: len(s.heritage) >= 5, reward_amber=100, reward_medals=1000),
+    # Hidden / secret achievements (gp-permanent-scaling). The ``desc``
+    # is shown only after unlock; before that, the ``hint`` (a cryptic
+    # in-game teaser) is shown instead so the player has an in-game path
+    # to the unlock that is NOT wiki-dependent. The ``check`` still fires
+    # normally -- ``hidden`` controls the display only.
+    Achievement("secret_voidwalker", "Voidwalker",
+                "Fall in battle and rise again 10 times in a single run.",
+                lambda s: getattr(s, "_deaths_this_run", 0) >= 10,
+                reward_amber=15, reward_medals=150,
+                hidden=True,
+                hint="The road remembers those who walk it twice."),
+    Achievement("secret_midnight", "Midnight Caller",
+                "Catch 100 fireflies in total across all runs.",
+                lambda s: getattr(s, "_fireflies_caught_total", 0) >= 100,
+                reward_amber=10, reward_medals=100,
+                hidden=True,
+                hint="Light gathers where the night is longest."),
+    Achievement("secret_untouchable", "Untouchable",
+                "Reach zone 9 without taking a single hit.",
+                lambda s: (s.best_zone >= 9
+                           and getattr(s, "_hits_taken_this_run", 0) == 0),
+                reward_amber=25, reward_medals=250,
+                hidden=True,
+                hint="The perfect blade is the one that is never drawn."),
 ]

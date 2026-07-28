@@ -159,6 +159,66 @@ def _heritage_provider(state: GameState) -> dict[str, float]:
     return out
 
 
+# Stacking tokens -- the permanent +1%-per-token floor (gp-permanent-scaling).
+# ``state.tokens`` is a ``dict[str, int]`` mapping token kind
+# (strike / crit / coin / elixir) to count. Tokens are sourced from daily
+# quests + zone-boss milestones (NOT achievements -- see Heritage below)
+# and survive ALL prestige layers (ascension resets gold/upgrades/zone/
+# combo/energy but never tokens). Each token of a kind is +1% (0.01) to
+# that kind's stat; the provider emits ``<kind>_token_pct`` per kind.
+#
+# The acquisition rate is capped (see ``core.quests.award_boss_token`` and
+# ``update_daily_progress``) so the +1%-per-token complements rather than
+# replaces the exponential zone scaling -- a player who kills 100 bosses
+# does NOT get 100 tokens.
+
+
+def _tokens_provider(state: GameState) -> dict[str, float]:
+    """Permanent stacking tokens: +1% (0.01) per token of each kind.
+
+    ``state.tokens`` maps token kind (``strike`` / ``crit`` / ``coin`` /
+    ``elixir``) to count. Each token of a kind contributes +1% to that
+    kind's ``<kind>_token_pct`` key. The keys are distinct from the
+    skill-tree/pet ``tap_pct`` / ``crit_pct`` / ``gold_pct`` / ``atk_pct``
+    keys so they stack additively without collision.
+    """
+    out: dict[str, float] = {}
+    for kind, count in state.tokens.items():
+        if count <= 0:
+            continue
+        out[f"{kind}_token_pct"] = out.get(f"{kind}_token_pct", 0.0) + count * 0.01
+    return out
+
+
+# Heritage passives (achievements) -- the 14 one-shot amber/medal-payout
+# achievements converted to permanent cumulative multipliers
+# (gp-permanent-scaling). Each unlocked achievement contributes +0.5%
+# (0.005) to a single ``heritage_pct`` key the engine folds into the
+# stat stack. This is a DIFFERENT heritage from the Dojo heritage
+# (Task 15's ``_heritage_provider`` reads ``state.heritage``, the set of
+# dojo ids, and emits ``heritage_<id>`` keys). The two read disjoint
+# state (``state.achievements`` vs ``state.heritage``) and emit disjoint
+# keys (``heritage_pct`` vs ``heritage_<id>``) so there is no
+# double-counting.
+_HERITAGE_ACHIEVEMENT_BUFF = 0.005  # +0.5% permanent multiplier per achievement
+
+
+def _heritage_achievements_provider(state: GameState) -> dict[str, float]:
+    """Permanent cumulative multiplier from unlocked achievements.
+
+    Each unlocked achievement contributes +0.5% (0.005) to a single
+    ``heritage_pct`` key. The provider reads ``len(state.achievements)``
+    (NOT the Dojo ``state.heritage`` set -- that is a different heritage;
+    see ``_heritage_provider`` above). The two heritages read disjoint
+    state and emit disjoint keys, so they stack cleanly without
+    double-counting.
+    """
+    n = len(state.achievements)
+    if n <= 0:
+        return {}
+    return {"heritage_pct": n * _HERITAGE_ACHIEVEMENT_BUFF}
+
+
 # Register the built-in providers. Order does not matter — contributions
 # are summed additively by key.
 register_provider(_skill_tree_provider)
@@ -166,6 +226,8 @@ register_provider(_pets_provider)
 register_provider(_pets_passive_provider)
 register_provider(_dojo_provider)
 register_provider(_heritage_provider)
+register_provider(_tokens_provider)
+register_provider(_heritage_achievements_provider)
 
 
 def aggregate_bonuses(state: GameState) -> dict[str, float]:

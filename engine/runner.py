@@ -12,7 +12,7 @@ import config as cfg
 from core.state import GameState
 from utils import rng
 from core.bonuses import aggregate_bonuses
-from core.quests import maybe_refresh_dailies, update_daily_progress, check_achievements
+from core.quests import maybe_refresh_dailies, update_daily_progress, check_achievements, award_boss_token
 from engine.ninja import Ninja, make_ninja, compute_ninja_stats
 from engine.enemy import Enemy, tick_combat, tap as tap_enemy, nearest_enemy, PARTY_X
 from engine.firefly import Firefly, update_fireflies, catch_firefly
@@ -185,7 +185,12 @@ class Runner:
     def gold_mult(self) -> float:
         evo = aggregate_bonuses(self.state)
         return (1.0 + evo.get("gold_pct", 0.0) + evo.get("godai_fire", 0.0)
-                + _upgrade_pct(self.state, "gold_drop"))
+                + _upgrade_pct(self.state, "gold_drop")
+                # Stacking tokens (gp-permanent-scaling): coin tokens are
+                # +1% each to gold. Permanent, sourced from daily quests +
+                # zone-boss milestones (NOT achievements -- no
+                # double-counting with the Heritage passives).
+                + evo.get("coin_token_pct", 0.0))
 
     # -----------------------------------------------------------------
     # Cleave (Task 16): overkill-clears the next K enemies on a massive
@@ -404,6 +409,11 @@ class Runner:
         # Rare drops.
         if enemy.is_boss:
             self.state.bosses_killed += 1
+            # Stacking token (gp-permanent-scaling): award a token at a
+            # capped milestone rate (every BOSS_TOKEN_EVERY kills). The
+            # cap ensures the +1%-per-token complements rather than
+            # replaces the exponential zone scaling.
+            award_boss_token(self.state, self.state.bosses_killed - 1)
             self.notify(f"Boss slain: {enemy.name}!", (255, 220, 120))
             self.boss_fx.stop()
         if enemy.is_miniboss:

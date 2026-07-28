@@ -53,7 +53,8 @@ def compute(state: GameState) -> dict:
                         ** min(1.0, state.zone_index / 8.0))
     interval = base_interval * (1.0 - min(0.8, density))
     kills = int((elapsed / max(cfg.SPAWN_INTERVAL_MIN, interval)) * OFFLINE_EFFICIENCY)
-    gold_from_kills = kills * avg_gold * (1.0 + evo.get("gold_pct", 0.0))
+    gold_from_kills = kills * avg_gold * (1.0 + evo.get("gold_pct", 0.0)
+                                           + evo.get("coin_token_pct", 0.0))
 
     total_gold = gold_from_buildings + gold_from_kills
     if total_gold <= 0:

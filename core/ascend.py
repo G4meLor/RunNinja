@@ -46,6 +46,11 @@ def elixir_gain(state: GameState) -> int:
     """
     evo = aggregate_bonuses(state)
     mult = 1.0 + evo.get("elixir_pct", 0.0) + evo.get("godai_void", 0.0)
+    # Stacking tokens (gp-permanent-scaling): elixir tokens are +1% each
+    # to elixir gain. They are permanent (survive all prestige layers)
+    # and sourced from daily quests + zone-boss milestones (NOT
+    # achievements -- no double-counting with the Heritage passives).
+    mult += evo.get("elixir_token_pct", 0.0)
     if state.lifetime_gold <= 0:
         return 0
     rate = getattr(cfg, "ELIXIR_RATE", 0.005)
