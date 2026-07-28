@@ -25,6 +25,9 @@ class GameScreen:
         # Active-skill buttons (built when skills are unlocked).
         self.skill_buttons: list[Button] = []
         self._build_skill_buttons()
+        # Combo Finisher buttons (always present; enabled when charges > 0).
+        self.finisher_buttons: list[Button] = []
+        self._build_finisher_buttons()
         # Energy button.
         self.btn_energy = Button(
             (cfg.WINDOW_W - 180, cfg.WINDOW_H - 60, 160, 44),
@@ -67,6 +70,34 @@ class GameScreen:
             self.skill_buttons.append(btn)
             x += 140
 
+    def _build_finisher_buttons(self) -> None:
+        """Build the 4 combo-finisher buttons.
+
+        Each button shows the finisher's name; the charge count is drawn
+        next to it (in the combo HUD area). The buttons are always
+        present; they're disabled when the player has fewer charges than
+        the finisher's cost (the runner's ``activate_finisher`` is the
+        source of truth — it no-ops and notifies if charges are short).
+        """
+        from engine.runner import FINISHERS
+        self.finisher_buttons = []
+        # Place the finisher buttons in a row above the skill buttons
+        # (cfg.WINDOW_H - 110) so they don't overlap the skill row.
+        x = 16
+        y = cfg.WINDOW_H - 110
+        for fid, (name, cost, _kind) in FINISHERS.items():
+            btn = Button((x, y, 150, 40), name,
+                         on_click=lambda f=fid: self._fire_finisher(f))
+            self.finisher_buttons.append(btn)
+            x += 156
+        self._finisher_ids = list(FINISHERS.keys())
+
+    def _fire_finisher(self, fid: str) -> None:
+        """Spend charges on a combo finisher (called by the finisher buttons)."""
+        self.game.runner.activate_finisher(fid)
+        from assets import play
+        play("skill", self.game.state.sound_on)
+
     def _fire_skill(self, sid: str) -> None:
         self.game.runner.activate_skill(sid)
         from assets import play
@@ -95,12 +126,12 @@ class GameScreen:
             self.game.runner.tap_at(event.pos[0], event.pos[1])
             from assets import play
             play("tap", self.game.state.sound_on)
-        for b in self.nav_buttons + self.skill_buttons:
+        for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
             b.handle(event)
         self.btn_energy.handle(event)
 
     def update(self, dt: float) -> None:
-        for b in self.nav_buttons + self.skill_buttons:
+        for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
             b.update(dt)
         self.btn_energy.update(dt)
         # Refresh skill buttons if the runner's skill set changed.
@@ -262,6 +293,30 @@ class GameScreen:
         ebr = pygame.Rect(cfg.WINDOW_W - 180, cfg.WINDOW_H - 70, 160, 6)
         draw_bar(surf, ebr, state.energy / state.energy_max,
                  fill=C.mp, bg=C.mp_bg, border=C.panel_border)
+
+        # Combo Finisher buttons + charge count. The buttons are drawn
+        # in a row above the skill buttons; each shows the finisher name
+        # and is enabled only when the player has enough charges. The
+        # charge count is drawn as a small label above the row.
+        from engine.runner import FINISHERS
+        charges = state.combo_charges
+        # Charge count label (top-left of the finisher row).
+        chg_x = 16
+        chg_y = cfg.WINDOW_H - 130
+        chg_text = f"Charges: {charges}"
+        draw_text(surf, chg_text, (chg_x, chg_y), font_sm(bold=True), C.gold)
+        for i, b in enumerate(self.finisher_buttons):
+            fid = self._finisher_ids[i] if i < len(self._finisher_ids) else None
+            if fid is not None:
+                _name, cost, _kind = FINISHERS[fid]
+                # Enable the button only when the player has enough charges.
+                b.enabled = charges >= cost
+                # Phantom Step needs combo >= 100 too; show it as
+                # disabled (but still spendable on click — the runner
+                # refunds the charges with a notification if combo < 100).
+                if fid == "phantom_step" and state.combo < 100:
+                    b.enabled = False
+            b.draw(surf)
 
         # Nav buttons.
         for b in self.nav_buttons:

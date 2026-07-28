@@ -156,8 +156,12 @@ class ComboFxSystem:
         self._part_scratch: pygame.Surface | None = None
         self._flash_surf: pygame.Surface | None = None
         # Cached label/shadow surfaces, per milestone, per scale step.
+        # Milestone 0 is the "COMBO LOST" sentinel (not in MILESTONES).
         self._label_cache: dict[int, list[pygame.Surface]] = {}
         self._shadow_cache: dict[int, list[pygame.Surface]] = {}
+        # Reduced-motion gate (set from state.reduced_motion by the runner).
+        # When True, the COMBO LOST banner is suppressed (accessibility).
+        self.reduced_motion: bool = False
 
     def reset(self) -> None:
         """Clear all active FX (call on ascension / new run)."""
@@ -212,6 +216,26 @@ class ComboFxSystem:
         self._flash = _FLASH_DUR
         return {"milestone": combo, "label": info["label"], "gold": award}
 
+    def lost(self, combo: int) -> None:
+        """Trigger the COMBO LOST banner when the combo fully resets.
+
+        Reuses the banner machinery with a "COMBO LOST" label and the
+        combo count as the subtext. Gated by ``reduced_motion`` (set from
+        ``state.reduced_motion`` by the runner): when reduced-motion is on,
+        the banner is suppressed (no flash, no ring, no particles — the
+        combo simply resets silently for accessibility).
+
+        ``combo`` is the combo count that was just lost (used for the
+        subtext). The milestone id 0 is a sentinel for the COMBO LOST
+        banner (not in MILESTONES, so it has its own cache slot).
+        """
+        if self.reduced_motion:
+            return
+        # No ring/particles/flash for the lost banner — it's a brief,
+        # somber notice, not a celebration. The banner itself is the
+        # whole effect.
+        self._spawn_banner(0, "COMBO LOST", float(combo))
+
     def update(self, dt: float) -> None:
         # Banner.
         b = self._banner
@@ -243,7 +267,12 @@ class ComboFxSystem:
 
     # -- spawners --------------------------------------------------------
     def _spawn_banner(self, milestone: int, label: str, gold: float) -> None:
-        sub_text = f"Combo x{milestone}   +{format_number(gold)} gold"
+        # milestone 0 is the "COMBO LOST" sentinel: the subtext is the
+        # combo count that was just lost, not a gold reward.
+        if milestone == 0:
+            sub_text = f"Combo x{int(gold)} lost"
+        else:
+            sub_text = f"Combo x{milestone}   +{format_number(gold)} gold"
         b = self._banner
         b.milestone = milestone
         b.label = label
@@ -396,8 +425,16 @@ class ComboFxSystem:
         cached = self._label_cache.get(milestone)
         if cached is not None:
             return cached
-        label = MILESTONES[milestone]
-        base = font_huge(bold=True).render(label, True, C.gold).convert_alpha()
+        # milestone 0 is the "COMBO LOST" sentinel (not in MILESTONES).
+        # Its label is the literal "COMBO LOST" (already passed to
+        # _spawn_banner), so we render it directly here with the warning
+        # color so it reads as a somber notice, not a gold celebration.
+        if milestone == 0:
+            label = "COMBO LOST"
+            base = font_huge(bold=True).render(label, True, C.text_bad).convert_alpha()
+        else:
+            label = MILESTONES[milestone]
+            base = font_huge(bold=True).render(label, True, C.gold).convert_alpha()
         steps = self._build_scaled_steps(base)
         self._label_cache[milestone] = steps
         return steps
@@ -406,8 +443,12 @@ class ComboFxSystem:
         cached = self._shadow_cache.get(milestone)
         if cached is not None:
             return cached
-        label = MILESTONES[milestone]
-        base = font_huge(bold=True).render(label, True, (20, 14, 30)).convert_alpha()
+        if milestone == 0:
+            label = "COMBO LOST"
+            base = font_huge(bold=True).render(label, True, (20, 14, 30)).convert_alpha()
+        else:
+            label = MILESTONES[milestone]
+            base = font_huge(bold=True).render(label, True, (20, 14, 30)).convert_alpha()
         steps = self._build_scaled_steps(base)
         self._shadow_cache[milestone] = steps
         return steps

@@ -21,7 +21,7 @@ from engine.world import World
 from engine.eventbus import EventBus
 from engine.fx import FXLayer
 from engine.death_fx import DeathFxSystem
-from engine.combo_fx import ComboFxSystem
+from engine.combo_fx import ComboFxSystem, MILESTONES as _COMBO_MILESTONES
 from engine.ninja_fx import NinjaFxSystem
 from engine.skill_fx import SkillFxSystem
 from engine.zone_fx import ZoneFxSystem
@@ -31,6 +31,34 @@ from engine.firefly_fx import FireflyFxSystem
 
 COMBO_WINDOW = 3.0       # seconds before combo decays
 COMBO_MULT_CAP = 3.0     # asymptotic ceiling for the combo multiplier
+COMBO_GRACE = 1.5        # seconds combo_timer can go negative before reset
+
+# Combo Finishers: a charge is banked when the running combo crosses a
+# ``combo_fx.MILESTONES`` threshold (25/50/100/200 — piggyback on the
+# existing dict, which also has 10). Charges persist through the decay
+# window and are only lost when the combo fully resets (after the grace
+# window). Each finisher spends charges; finisher damage is a FIXED
+# multiple of ``tap_damage`` with its own cap (``MAX_FINISHER_MULT``),
+# NOT multiplicative with ``combo_mult`` — so a finisher never scales
+# with the combo multiplier (the cap is the whole point: a fixed burst
+# the player banks charges for, not another combo-scaled nuke).
+MAX_FINISHER_MULT = 5.0  # cap on tap_damage multiplier for finisher damage
+
+# Finisher definitions: id -> (name, cost in charges, kind).
+# ``kind`` selects the effect branch in ``activate_finisher``.
+#   thousand_cuts    — line AOE, 1 charge, dmg = tap_damage * 5 (capped)
+#   phantom_step     — boss-kill if combo >= 100, 2 charges
+#   mirage           — shadow clones, 1 charge
+#   executioner_edge — guaranteed-crit taps, 1 charge
+# Bosses are auto-killable WITHOUT phantom_step (the ninja's auto-attack
+# kills them normally); phantom_step is a convenience, never a gate on
+# progression.
+FINISHERS: dict[str, tuple[str, int, str]] = {
+    "thousand_cuts":    ("Thousand Cuts",    1, "aoe"),
+    "phantom_step":     ("Phantom Step",     2, "boss_kill"),
+    "mirage":           ("Mirage",           1, "clones"),
+    "executioner_edge": ("Executioner's Edge", 1, "crit_buff"),
+}
 
 
 class Runner:
@@ -44,6 +72,10 @@ class Runner:
         self.fx = FXLayer()
         self.death_fx = DeathFxSystem()
         self.combo_fx = ComboFxSystem()
+        # Wire the combo FX reduced-motion gate from state (the same way
+        # death_fx is wired by main.py; set here so tests that construct
+        # a Runner directly without main.py still get the gate).
+        self.combo_fx.reduced_motion = state.reduced_motion
         self.ninja_fx = NinjaFxSystem()
         self.skill_fx = SkillFxSystem()
         self.zone_fx = ZoneFxSystem()
@@ -56,6 +88,10 @@ class Runner:
         # subscribes the FX systems. Replaces the module-global FX
         # callbacks (kept as deprecated aliases that forward to the bus).
         self.bus = EventBus()
+        # Executioner's Edge finisher: a transient timer that, while > 0,
+        # makes every tap/auto-attack a guaranteed crit. Decremented in
+        # ``update``. See ``activate_finisher("executioner_edge")``.
+        self._executioner_timer: float = 0.0
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
@@ -154,6 +190,14 @@ class Runner:
         combo_m = self.combo_mult()
         gold_m = self.gold_mult()
         auto_active = self.state.energy_active
+        # Executioner's Edge finisher: while the timer is > 0, every tap
+        # and auto-attack is a guaranteed crit. We model this by briefly
+        # maxing the ninja's crit_chance for the duration of the combat
+        # tick (the value is restored below after tick_combat), so the
+        # existing roll_crit path picks it up without a new code path.
+        _saved_crit_chance = self.ninja.crit_chance
+        if self._executioner_timer > 0:
+            self.ninja.crit_chance = 1.0  # guaranteed crit
 
         def on_kill(enemy: Enemy) -> None:
             self._on_enemy_killed(enemy, combo_m, gold_m, evo)
@@ -162,6 +206,10 @@ class Runner:
                     combo_mult=combo_m, gold_mult=gold_m,
                     auto_active=auto_active, on_kill=on_kill)
 
+        # Restore the ninja's real crit_chance (the Executioner's Edge
+        # override was only for this tick).
+        self.ninja.crit_chance = _saved_crit_chance
+
         # Cull dead enemies after their death-fade window so corpses don't
         # clog the spawn cap (the old C1 bug).  last_damage_timer is
         # decremented for ALL enemies in tick_combat, so a dead enemy
@@ -169,11 +217,32 @@ class Runner:
         self.world.enemies = [e for e in self.world.enemies
                               if e.alive or e.last_damage_timer > -0.3]
 
-        # Combo decay.
+        # Executioner's Edge finisher timer (transient guaranteed-crit
+        # buff). Decrement after the combat tick (the override above
+        # applied for this whole tick).
+        if self._executioner_timer > 0:
+            self._executioner_timer = max(0.0, self._executioner_timer - dt)
+
+        # Combo decay (with grace period). ``combo_timer`` is allowed to
+        # go negative to -COMBO_GRACE (-1.5s) before the combo fully
+        # resets; a kill during the grace window (combo_timer < 0)
+        # restores combo_timer to the full window (see _on_enemy_killed).
+        # Charges persist through the decay window and are only cleared
+        # on the full reset (the grace window is a "last chance" to
+        # refresh the combo, not a fresh start).
+        # Sync the combo FX reduced-motion gate from state each tick
+        # (the same way main.py wires death_fx; syncing here keeps the
+        # gate current if the player toggles reduced_motion mid-run).
+        self.combo_fx.reduced_motion = self.state.reduced_motion
         if self.state.combo > 0:
             self.state.combo_timer -= dt
-            if self.state.combo_timer <= 0:
+            if self.state.combo_timer <= -COMBO_GRACE:
+                # Combo fully reset: fire the COMBO LOST banner (gated
+                # by reduced_motion inside combo_fx.lost), then clear
+                # the combo + banked charges.
+                self.combo_fx.lost(self.state.combo)
                 self.state.combo = 0
+                self.state.combo_charges = 0
 
         # Fireflies.
         update_fireflies(self.world.fireflies, dt)
@@ -205,7 +274,12 @@ class Runner:
         if not self.ninja.alive:
             self.ninja.alive = True
             self.ninja.hp = self.ninja.max_hp * 0.3
+            # A death breaks the combo (the ninja dropped). Clear combo
+            # + charges; the COMBO LOST banner is NOT fired here (the
+            # death is its own feedback).
             self.state.combo = 0
+            self.state.combo_charges = 0
+            self.state.combo_timer = 0.0
             self.notify("The ninja rises again!", (130, 230, 160))
 
         # Sync world totals to state.
@@ -249,12 +323,29 @@ class Runner:
         self._award_gold(gold)
         self.state.monsters_killed += 1
         self.state.kills_today += 1
+        # Combo increment + grace-window restore. A kill during the grace
+        # window (combo_timer < 0) restores the full window — the combo
+        # was "saved" at the last second. A kill with combo_timer >= 0
+        # just refreshes the window as usual.
+        prev_combo = self.state.combo
         self.state.combo += 1
         self.state.combo_timer = COMBO_WINDOW + evo.get("combo_window", 0.0) + _upgrade_val(self.state, "combo_window")
         if self.state.combo > self.state.best_combo_ever:
             self.state.best_combo_ever = self.state.combo
         if self.state.combo > self.state.best_combo_today:
             self.state.best_combo_today = self.state.combo
+        # Combo Finisher charge banking: when the running combo crosses a
+        # ``combo_fx.MILESTONES`` threshold (25/50/100/200 — and 10, the
+        # other key in the dict), bank a charge into ``combo_charges``.
+        # ``prev_combo < m <= self.state.combo`` catches the exact cross
+        # (so a single kill that jumps from 24 to 25 banks a charge,
+        # and a kill from 99 to 100 banks another). Charges persist
+        # through the decay window and are only lost on the full reset
+        # (see the decay block in ``update``).
+        for m in _COMBO_MILESTONES:
+            if prev_combo < m <= self.state.combo:
+                self.state.combo_charges += 1
+                break  # one charge per kill (a single kill can't cross 2)
         # Combo milestone celebration.
         info = self.combo_fx.check(self.state.combo)
         if info is not None:
@@ -383,6 +474,91 @@ class Runner:
             self.notify("Auto Katana engaged!", (130, 230, 160))
 
     # -----------------------------------------------------------------
+    # Combo Finishers
+    # -----------------------------------------------------------------
+    def activate_finisher(self, fid: str) -> None:
+        """Spend banked combo charges on a finisher.
+
+        Each finisher spends a fixed number of charges (see
+        ``FINISHERS``). Finisher damage is a FIXED multiple of
+        ``tap_damage`` with its own cap (``MAX_FINISHER_MULT``), NOT
+        multiplicative with ``combo_mult`` — so a finisher never scales
+        with the combo multiplier (the cap is the whole point: a fixed
+        burst the player banks charges for, not another combo-scaled
+        nuke). Bosses are auto-killable WITHOUT ``phantom_step`` (the
+        ninja's auto-attack kills them normally); ``phantom_step`` is a
+        convenience, never a gate on progression.
+        """
+        fdef = FINISHERS.get(fid)
+        if fdef is None:
+            return  # unknown finisher id: no-op (don't spend charges)
+        name, cost, kind = fdef
+        if self.state.combo_charges < cost:
+            self.notify(f"{name}: need {cost} charges!", (220, 120, 120))
+            return
+        # Spend the charges.
+        self.state.combo_charges -= cost
+        combo_m = self.combo_mult()
+        gold_m = self.gold_mult()
+        evo = aggregate_bonuses(self.state)
+        if kind == "aoe":
+            # Thousand Cuts: line AOE. Damage = tap_damage * 5, capped
+            # at MAX_FINISHER_MULT (so the multiplier is min(5, MAX)).
+            # NOT multiplicative with combo_mult.
+            mult = min(5.0, MAX_FINISHER_MULT)
+            dmg = self.ninja.tap_damage * mult
+            from engine.enemy import _apply_damage
+            for t in list(self.world.enemies):
+                if t.alive:
+                    _apply_damage(t, dmg, is_crit=True)
+                    if not t.alive:
+                        self._on_enemy_killed(t, combo_m, gold_m, evo)
+            # Skill VFX for the finisher (reuse the skill-FX burst).
+            self.skill_fx.trigger("shuriken", self.ninja.x, self.ninja.y,
+                                  self.world.enemies)
+            self.notify(f"{name}!", (255, 90, 90))
+        elif kind == "boss_kill":
+            # Phantom Step: instant-kill a boss IF combo >= 100. Bosses
+            # are auto-killable WITHOUT this (the ninja's auto-attack
+            # kills them normally); this is a convenience skip, never a
+            # gate on progression. With combo < 100, the finisher spends
+            # no charges and refunds them (it's a no-op, not a waste).
+            if self.state.combo < 100:
+                # Refund: this finisher is only meaningful at combo >= 100.
+                self.state.combo_charges += cost
+                self.notify(f"{name}: needs combo >= 100!", (220, 120, 120))
+                return
+            boss = next((e for e in self.world.enemies if e.is_boss and e.alive), None)
+            if boss is not None:
+                boss.alive = False
+                boss.hp = 0
+                self._on_enemy_killed(boss, combo_m, gold_m, evo)
+                self.notify(f"{name}! Boss slain!", (255, 220, 120))
+            else:
+                # No boss to kill: refund the charges (don't waste them).
+                self.state.combo_charges += cost
+                self.notify(f"{name}: no boss to kill!", (220, 120, 120))
+        elif kind == "clones":
+            # Mirage: shadow clones — a brief burst of auto-katana-like
+            # attack speed (modeled like the "speed" skill: a short
+            # energy burst). The clones deal no extra damage themselves;
+            # the effect is the auto-attack burst over the next few
+            # seconds. Costs 1 charge.
+            self.state.energy_active = True
+            self.state.energy = max(self.state.energy, 6.0)
+            self.notify(f"{name}! Shadow clones engaged!", (180, 130, 255))
+        elif kind == "crit_buff":
+            # Executioner's Edge: guaranteed-crit taps for a short
+            # window. We model this by briefly maxing the ninja's
+            # crit_chance for the duration of each combat tick while the
+            # timer is > 0 (see the override in ``update``). Costs 1
+            # charge. The effect is purely visual + a brief DPS bump; the
+            # cap on the damage itself is the ninja's existing crit_dmg (no
+            # new multiplier, NOT multiplicative with combo_mult).
+            self._executioner_timer = 5.0  # seconds of guaranteed crits
+            self.notify(f"{name}! Guaranteed crits!", (255, 180, 90))
+
+    # -----------------------------------------------------------------
     # Misc
     # -----------------------------------------------------------------
     def notify(self, text: str, color=(255, 255, 255)) -> None:
@@ -397,6 +573,11 @@ class Runner:
         self._refresh_skills()
         self.state.energy = self.state.energy_max
         self.state.energy_active = False
+        # Reset combo + charges + the Executioner's Edge timer on ascension.
+        self.state.combo = 0
+        self.state.combo_charges = 0
+        self.state.combo_timer = 0.0
+        self._executioner_timer = 0.0
         # Clear all FX.
         self.fx.texts.clear()
         self.death_fx.fx.clear()
