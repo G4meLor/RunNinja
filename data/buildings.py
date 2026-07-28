@@ -24,25 +24,31 @@ class BuildingDef:
 
 
 # (id, name, base_gps, base_cost, cost_growth, unlock_zone, icon, hue, desc)
+# unlock_zone is compressed to a smooth 0-8 distribution (2 buildings per
+# zone) so every building is reachable in a single run to zone 8.  The old
+# 9-16 spread was dead content: ascension resets zone to 0 and the natural
+# max reachable zone is ~9-12, so half the roster never unlocked.  Buildings
+# now persist through ascension (scaled by the tier stat_mult in
+# total_gps), so the unlock gate is the only thing that needs to fit one run.
 _ROWS = [
     ("farm", "Farm", 1, 15, 1.15, 0, "hut", 90, "A humble rice farm."),
     ("sawmill", "Sawmill", 5, 100, 1.16, 0, "hut", 60, "Wood for the village."),
     ("mine", "Mine", 20, 1.1e3, 1.17, 1, "hut", 30, "Iron from the earth."),
-    ("tavern", "Tavern", 80, 12e3, 1.18, 2, "hut", 20, "Sake and stories."),
-    ("blacksmith", "Blacksmith", 300, 130e3, 1.18, 3, "hut", 10, "Steel and sparks."),
-    ("barracks", "Barracks", 1.0e3, 1.4e6, 1.19, 4, "hut", 0, "House the warriors."),
-    ("dojo", "Dojo", 4.0e3, 16e6, 1.19, 5, "torii", 340, "Train the way of the blade."),
-    ("shrine", "Shrine", 15e3, 180e6, 1.20, 6, "torii", 300, "Honor the spirits."),
-    ("pagoda", "Pagoda", 60e3, 2.0e9, 1.20, 7, "pagoda", 280, "A tower to the sky."),
-    ("castle", "Castle", 250e3, 22e9, 1.21, 8, "pagoda", 220, "Seat of the lord."),
-    ("forge", "Forge", 1.0e6, 250e9, 1.21, 9, "pagoda", 30, "Forge of legends."),
-    ("treasury", "Treasury", 4.0e6, 2.8e12, 1.22, 10, "pagoda", 50, "Gold upon gold."),
-    ("observatory", "Observatory", 15e6, 30e12, 1.22, 11, "pagoda", 200, "Read the stars."),
-    ("dragon_vein", "Dragon Vein", 60e6, 330e12, 1.23, 12, "pagoda", 0, "The dragon's blood."),
-    ("spirit_gate", "Spirit Gate", 250e6, 3.6e15, 1.23, 13, "pagoda", 270, "Gate to the beyond."),
-    ("celestial", "Celestial Shrine", 1.0e9, 40e15, 1.24, 14, "pagoda", 50, "Shrine of the heavens."),
-    ("void_altar", "Void Altar", 4.0e9, 440e15, 1.24, 15, "pagoda", 280, "Altar of the void."),
-    ("infinity", "Infinity Gate", 15e9, 4.8e18, 1.25, 16, "pagoda", 320, "The endless gate."),
+    ("tavern", "Tavern", 80, 12e3, 1.18, 1, "hut", 20, "Sake and stories."),
+    ("blacksmith", "Blacksmith", 300, 130e3, 1.18, 2, "hut", 10, "Steel and sparks."),
+    ("barracks", "Barracks", 1.0e3, 1.4e6, 1.19, 2, "hut", 0, "House the warriors."),
+    ("dojo", "Dojo", 4.0e3, 16e6, 1.19, 3, "torii", 340, "Train the way of the blade."),
+    ("shrine", "Shrine", 15e3, 180e6, 1.20, 3, "torii", 300, "Honor the spirits."),
+    ("pagoda", "Pagoda", 60e3, 2.0e9, 1.20, 4, "pagoda", 280, "A tower to the sky."),
+    ("castle", "Castle", 250e3, 22e9, 1.21, 4, "pagoda", 220, "Seat of the lord."),
+    ("forge", "Forge", 1.0e6, 250e9, 1.21, 5, "pagoda", 30, "Forge of legends."),
+    ("treasury", "Treasury", 4.0e6, 2.8e12, 1.22, 5, "pagoda", 50, "Gold upon gold."),
+    ("observatory", "Observatory", 15e6, 30e12, 1.22, 6, "pagoda", 200, "Read the stars."),
+    ("dragon_vein", "Dragon Vein", 60e6, 330e12, 1.23, 6, "pagoda", 0, "The dragon's blood."),
+    ("spirit_gate", "Spirit Gate", 250e6, 3.6e15, 1.23, 7, "pagoda", 270, "Gate to the beyond."),
+    ("celestial", "Celestial Shrine", 1.0e9, 40e15, 1.24, 7, "pagoda", 50, "Shrine of the heavens."),
+    ("void_altar", "Void Altar", 4.0e9, 440e15, 1.24, 8, "pagoda", 280, "Altar of the void."),
+    ("infinity", "Infinity Gate", 15e9, 4.8e18, 1.25, 8, "pagoda", 320, "The endless gate."),
 ]
 
 

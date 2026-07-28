@@ -81,20 +81,44 @@ def buy_max(state: GameState, bid: str) -> int:
 
 
 def building_gps(state: GameState, bid: str) -> float:
-    """Gold/sec contributed by building ``bid`` at its current level."""
+    """Gold/sec contributed by building ``bid`` at its current level.
+
+    Scaled by the ascension tier ``stat_mult`` (buildings persist through
+    ascension; their output scales with the tier so they stay relevant).
+    """
     b = bd.BY_ID[bid]
-    return bd.building_gps(b, state.building_level(bid))
+    return bd.building_gps(b, state.building_level(b.id)) * _tier_mult(state)
+
+
+def _tier_mult(state: GameState) -> float:
+    """The current ascension tier's stat multiplier (1.0 at Mortal).
+
+    Buildings persist through ascension; their output is scaled by the
+    tier ``stat_mult`` so they stay relevant as the player climbs tiers.
+    Mirrors ``engine.ninja._ascend_tier_mult`` (kept local to avoid a
+    cross-module dependency for a one-line lookup).
+    """
+    import config as cfg
+    i = min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)
+    return cfg.ASCEND_TIERS[i][1]
 
 
 def total_gps(state: GameState) -> float:
-    """Total passive gold/sec from all buildings, with all multipliers."""
+    """Total passive gold/sec from all buildings, with all multipliers.
+
+    Building output is scaled by the ascension tier ``stat_mult`` so
+    persisted buildings stay relevant after ascension (buildings carry
+    over but the tier multiplier accelerates their gold/sec to match the
+    higher-tier zone economy).
+    """
     evo = aggregate_bonuses(state)
     gps_mult = (1.0 + evo.get("gps_pct", 0.0) + evo.get("godai_wind", 0.0)
                 + _upgrade_pct(state, "building_output"))
+    tier_mult = _tier_mult(state)
     total = 0.0
     for b in bd.BUILDINGS:
         total += bd.building_gps(b, state.building_level(b.id))
-    return total * gps_mult
+    return total * gps_mult * tier_mult
 
 
 def upgrade_cost(state: GameState, key: str) -> float:

@@ -156,6 +156,20 @@ ASCEND_TIERS = (
     ("Singularity", 7.00, 150000, 12000, "All roads converge into one."),
 )
 
+# Elixir awarded on ascension.  Re-tuned for the persist-through-ascension
+# economy: buildings now carry over (scaled by the tier stat_mult in
+# total_gps), so lifetime_gold grows faster on subsequent runs.  The
+# diminish factor scales elixir-per-gold down on higher tiers so the
+# post-ascension economy doesn't snowball.
+#
+#   elixir = lifetime_gold * ELIXIR_RATE * (1 - ELIXIR_DIMINISH * tier) * [bonuses]
+#
+# ELIXIR_RATE is tuned so a first ascension at ~10k lifetime gold gives
+# ~50 elixir (matching the Awakened soul_reward tier).  ELIXIR_DIMINISH
+# is 0.10 so the factor stays positive through all 7 tiers (tier 6 -> 0.40).
+ELIXIR_RATE = 0.005
+ELIXIR_DIMINISH = 0.10
+
 
 # ---------------------------------------------------------------------------
 # Evolution tree
