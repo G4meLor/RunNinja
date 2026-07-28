@@ -143,6 +143,15 @@ def compute_ninja_stats(state: GameState) -> dict:
     # core.ascend.elixir_gain (they read evo directly); they do NOT fold
     # into the combat stats here. Expose them in the returned dict so the
     # UI / tests can read the effective token contribution.
+    # ---- Heritage passives (achievements) (gp-permanent-scaling) ----
+    # Each unlocked achievement contributes +0.5% (0.005) to a single
+    # ``heritage_pct`` key. This is the achievements heritage (NOT the
+    # Dojo heritage above -- the two read disjoint state). The buff is a
+    # small permanent multiplier on the base tap + auto damage so it
+    # composes cleanly with the other layers.
+    heritage_ach_pct = evo.get("heritage_pct", 0.0)
+    tap_damage *= (1.0 + heritage_ach_pct)
+    auto_damage *= (1.0 + heritage_ach_pct)
     return {
         "tap_damage": max(1.0, tap_damage),
         "auto_damage": max(1.0, auto_damage),
