@@ -167,7 +167,6 @@ def pull(state: GameState) -> PetPullResult:
     # whether the rare+ pity counters are all equal to banner_pulls
     # (meaning every pull so far was common). To avoid edge cases at
     # pull 0, we check banner_pulls > 0 and < EARLY_PITY_WINDOW.
-    early_pity = False
     if (0 < state.banner_pulls < cfg.EARLY_PITY_WINDOW
             and all(state.pet_pity.get(r, 0) == state.banner_pulls
                     for r in ("rare", "epic", "legendary", "mythic"))):
@@ -181,7 +180,6 @@ def pull(state: GameState) -> PetPullResult:
                 weights.append(w)
             chosen = rng().choices(rare_plus_pool, weights=weights, k=1)[0]
             rarity = _rarity_of(chosen)
-            early_pity = True
             pity_used = True
         else:
             # No rare+ pet available (all locked or maxed) -- fall back
