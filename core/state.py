@@ -40,6 +40,7 @@ class GameState:
     pets: dict[str, int] = field(default_factory=dict)
     equipped_pets: list[str] = field(default_factory=list)
     pet_pulls: int = 0
+    pet_pity: dict[str, int] = field(default_factory=dict)  # rarity -> pulls since last drop (gp-gacha-fairness)
 
     # ---- Quests ----
     achievements: set[str] = field(default_factory=set)
@@ -279,6 +280,7 @@ def _migrate_v2_to_v3(d: dict) -> dict:
     # gp-gacha-fairness
     d.setdefault("pity_tokens", 0)
     d.setdefault("banner_pulls", 0)
+    d.setdefault("pet_pity", {})
     # cnt-shadow-dungeon
     d.setdefault("dungeon_active", False)
     d.setdefault("dungeon_type", "none")

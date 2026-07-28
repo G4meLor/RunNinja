@@ -89,6 +89,26 @@ PITY_RARE = 20
 PITY_EPIC = 60
 PITY_LEGENDARY = 200
 
+# Soft-pity ramp: after SOFT_PITY_START[rarity] pulls without that rarity,
+# the rate climbs by SOFT_PITY_INCREMENT per pull. This shortens the
+# PITY_LEGENDARY=200 grind — past 150 pulls the legendary rate ramps up
+# sharply so a 200-pull dry streak is very unlikely.
+SOFT_PITY_START = {  # per rarity: pulls without that rarity before the ramp
+    "rare": 15,
+    "epic": 50,
+    "legendary": 150,
+    "mythic": 190,
+}
+SOFT_PITY_INCREMENT = 0.02   # +2% per pull after the threshold
+
+# Spark/pity-token shop: 1 token per pull, trade SPARK_SHOP_COST for any
+# unlocked non-maxed pet. Pity tokens are cumulative across banners.
+SPARK_SHOP_COST = 40
+
+# Early-pity guarantee: in the first EARLY_PITY_WINDOW pulls of a new
+# banner, guarantee at least one rare+ (one-time-per-banner).
+EARLY_PITY_WINDOW = 10
+
 
 # ---------------------------------------------------------------------------
 # Upgrade economy

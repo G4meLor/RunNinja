@@ -55,6 +55,7 @@ _SCHEMA: dict[str, type] = {
     "pets": dict,
     "equipped_pets": list,
     "pet_pulls": int,
+    "pet_pity": dict,
     # Quests
     "achievements": list,
     "daily_quests": list,

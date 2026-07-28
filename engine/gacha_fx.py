@@ -95,6 +95,30 @@ _HOLD_MULTIPULL = 0.30      # per-card hold in a 10-pull (short, snappy)
 _GRID_IN_DUR = 0.45         # final 10-pull grid scale-in
 _GRID_HOLD_DUR = 1.20       # final grid hold before done
 
+# --- Rarity-scaled screen shake + hit-stop (gp-gacha-fairness) ---------------
+# Rarer pets shake harder + hitstop longer so the reveal lands with weight.
+# The caller (Game.shake / Game.hitstop_for) gates these on the render tier
+# (low disables), so the values here are the per-rarity magnitudes.
+SHAKE_AMPS = {
+    "common": 0.0,
+    "rare": 2.0,
+    "epic": 4.0,
+    "legendary": 7.0,
+    "mythic": 10.0,
+}
+HITSTOP_DURS = {
+    "common": 0.0,
+    "rare": 0.02,
+    "epic": 0.05,
+    "legendary": 0.09,
+    "mythic": 0.14,
+}
+
+# The skip-allowed window: after this many seconds into a card's suspense,
+# a skip input (click/key) jumps the card straight to the hold. The tell
+# (rarity color in the glow) is visible by this point.
+_SKIP_TELL = 0.15
+
 # --- Layout -----------------------------------------------------------------
 _CARD_W, _CARD_H = 360, 300
 _CARD_RADIUS = 16
@@ -356,8 +380,19 @@ class GachaFxSystem:
             return
 
         # If reduced motion, the first card is already in HOLD; otherwise
-        # start the sequence at the first card's suspense.
-        self._phase = self._cards[0].phase if self.reduced_motion else _SUSPENSE
+        # start the sequence at the first card's suspense, OR jump straight
+        # to the grid for a 10-pull (batch-summary-first: show all 10
+        # results at once, not card-by-card).
+        if self.reduced_motion:
+            self._phase = self._cards[0].phase
+        elif self._multi:
+            # Batch-summary-first: the 10-pull opens on the grid of all
+            # results. The caller can still drive card-by-card via skip()
+            # if it wants the dramatic path, but the default is the grid.
+            self._phase = _GRID
+            self._t = 0.0
+        else:
+            self._phase = _SUSPENSE
 
     def reset(self) -> None:
         """Return to idle (call after the caller consumes the sequence)."""
@@ -366,6 +401,66 @@ class GachaFxSystem:
         self._cards = []
         self._idx = 0
         self._multi = False
+
+    # ------------------------------------------------------------------
+    # Skip (gp-gacha-fairness)
+    # ------------------------------------------------------------------
+    def skip(self) -> bool:
+        """Skip the current card's suspense/flash straight to the hold.
+
+        Activates only after the rarity tell (``_SKIP_TELL`` seconds into
+        the card's suspense) so the player has seen the rarity color
+        before they can skip. Returns ``True`` if a skip happened,
+        ``False`` if it was too early or not in a skippable phase.
+
+        For a 10-pull in the grid phase, skip() advances straight to
+        done (dismiss the batch summary).
+        """
+        if self._phase == _GRID:
+            self._phase = _DONE
+            return True
+        if self._phase not in (_SUSPENSE, _FLASH):
+            return False
+        card = self._active_card()
+        if card is None:
+            return False
+        # Only allow the skip after the rarity tell is visible (the glow
+        # has been on screen long enough to read the color).
+        if card.phase == _SUSPENSE and card.t < _SKIP_TELL:
+            return False
+        # Jump to the hold: reveal the card, fire the burst, skip the
+        # remaining suspense + flash.
+        card.phase = _HOLD
+        card.t = 0.0
+        card.revealed = True
+        card.flash_life = 0.0
+        self._phase = _HOLD
+        return True
+
+    # ------------------------------------------------------------------
+    # Rarity-scaled shake + hit-stop (gp-gacha-fairness)
+    # ------------------------------------------------------------------
+    def shake_amp(self) -> float:
+        """The screen-shake amplitude for the active card's rarity.
+
+        0.0 for common, scaling up for rarer pets. The caller (Game.shake)
+        gates this on the render tier (low disables shake).
+        """
+        card = self._active_card()
+        if card is None:
+            return 0.0
+        return SHAKE_AMPS.get(card.rarity, 0.0)
+
+    def hitstop_dur(self) -> float:
+        """The hit-stop duration for the active card's rarity.
+
+        0.0 for common, scaling up for rarer pets. The caller
+        (Game.hitstop_for) gates this on the render tier.
+        """
+        card = self._active_card()
+        if card is None:
+            return 0.0
+        return HITSTOP_DURS.get(card.rarity, 0.0)
 
     # ------------------------------------------------------------------
     # Per-frame
@@ -552,16 +647,23 @@ class GachaFxSystem:
                    card: _Card) -> None:
         """Draw the building glow behind the card.
 
-        During suspense the glow pulses + grows in the card's color so
-        the player feels the build.  During the flash + hold it lingers
-        at full size, fading out over the hold so the reveal settles.
-        Drawn via the reusable glow scratch (cleared per frame).
+        During suspense the glow pulses + grows in the card's **rarity
+        color** from t=0 (the early tell -- the player can read the
+        rarity tier from the glow color before the card flips). During
+        the flash + hold it lingers at full size, fading out over the
+        hold so the reveal settles. Drawn via the reusable glow scratch
+        (cleared per frame).
         """
         if card.phase == _SUSPENSE:
+            # Early tell: the glow starts at the rarity color from t=0
+            # (not a neutral color that fades in). The opacity ramps up
+            # so the color is visible immediately, then intensifies.
             p = clamp(card.t / max(0.01, card.suspense_dur), 0.0, 1.0)
             p = ease_in_out_cubic(p)
             radius = int(60 + 120 * p)         # 60 -> 180
-            alpha = int(150 * p)
+            # Alpha starts at a visible floor (60) so the rarity color
+            # is readable from t=0, then ramps up to the full glow.
+            alpha = int(60 + 90 * p)
             # Pulse on top of the ramp so the glow breathes.
             pulse = 1.0 + 0.18 * math.sin(card.t * 9.0)
             radius = int(radius * pulse)
