@@ -26,7 +26,9 @@ class BuildingsScreen:
         items = []
         for b in bd.BUILDINGS:
             lvl = state.building_level(b.id)
-            gps = bd.building_gps(b, lvl)
+            # Use the state-aware (tier-scaled) gps so the per-building
+            # display matches the tier-scaled total_gps pill at the top.
+            gps = game_economy.building_gps(state, b.id)
             unlocked = state.zone_index >= b.unlock_zone
             items.append({
                 "label": f"{b.name}  Lv {lvl}",
@@ -113,7 +115,8 @@ class BuildingsScreen:
             draw_text(surf, b.name, (r.x + 90, r.y + 20), font_lg(bold=True), C.text)
             draw_text(surf, b.desc, (r.x + 90, r.y + 48), font_sm(), C.text_dim)
             draw_text(surf, f"Level: {state.building_level(b.id)}", (r.x + 16, r.y + 96), font_sm(), C.text)
-            draw_text(surf, f"Gold/sec: {format_number(bd.building_gps(b, state.building_level(b.id)))}",
+            # State-aware (tier-scaled) gps — matches the total_gps pill.
+            draw_text(surf, f"Gold/sec: {format_number(game_economy.building_gps(state, b.id))}",
                       (r.x + 16, r.y + 116), font_sm(), (120, 220, 200))
             draw_text(surf, f"Unlock: zone {b.unlock_zone + 1}", (r.x + 16, r.y + 136), font_xs(), C.text_dim)
         for b in self.buttons + self.buy_buttons:

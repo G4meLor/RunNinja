@@ -179,6 +179,58 @@ def test_total_gps_tier_zero_no_scaling(pygame_headless):
 
 
 # ---------------------------------------------------------------------------
+# Per-building UI display uses the state-aware (tier-scaled) gps
+# ---------------------------------------------------------------------------
+def test_building_gps_state_aware_is_tier_scaled(pygame_headless):
+    """``game_economy.building_gps(state, bid)`` scales by the tier stat_mult;
+    ``bd.building_gps(b, lvl)`` (the data-layer function) does not.  The UI
+    must use the state-aware version so the per-building display matches the
+    tier-scaled ``total_gps`` pill at the top of the buildings screen.
+    """
+    from core.state import GameState
+    from core.game_economy import building_gps as ge_building_gps
+    from data import buildings as bd
+    import config as cfg
+    state = GameState()
+    state.buildings = {"farm": 10}
+    state.ascend_tier = 1  # stat_mult = 1.25
+    b = bd.BY_ID["farm"]
+    lvl = state.building_level("farm")
+    # Data-layer: unscaled (base_gps * level).
+    raw = bd.building_gps(b, lvl)
+    assert raw == 10 * 1
+    # State-aware: scaled by the tier stat_mult.
+    expected_mult = cfg.ASCEND_TIERS[1][1]  # 1.25
+    scaled = ge_building_gps(state, "farm")
+    assert scaled == pytest.approx(raw * expected_mult, rel=1e-6), \
+        f"state-aware gps {scaled} != raw {raw} * tier_mult {expected_mult}"
+
+
+def test_ui_uses_state_aware_building_gps(pygame_headless):
+    """The buildings screen uses ``game_economy.building_gps`` (state-aware,
+    tier-scaled) for the per-building display, NOT ``bd.building_gps`` (the
+    unscaled data-layer function).
+
+    Inspects the source of ``BuildingsScreen._build_list`` and ``draw`` to
+    confirm the state-aware call is present and the raw data-layer call is
+    absent (other than for the level lookup).  This is a static check — it
+    does not construct the screen (which would need a full Game()).
+    """
+    import inspect
+    from ui.screen_buildings import BuildingsScreen
+    src = inspect.getsource(BuildingsScreen)
+    # The state-aware call is used (tier-scaled).
+    assert "game_economy.building_gps(state" in src, \
+        "BuildingsScreen does not call game_economy.building_gps(state, ...)"
+    # The raw data-layer gps call is NOT used for the display (only the
+    # state-aware version should appear for the g/s value).
+    assert "bd.building_gps(b, lvl)" not in src, \
+        "BuildingsScreen still uses the unscaled bd.building_gps(b, lvl)"
+    assert "bd.building_gps(b, state.building_level" not in src, \
+        "BuildingsScreen still uses the unscaled bd.building_gps(b, state...)"
+
+
+# ---------------------------------------------------------------------------
 # First 3 ascensions feel balanced (no snowball)
 # ---------------------------------------------------------------------------
 def test_first_three_ascensions_balanced(pygame_headless):
