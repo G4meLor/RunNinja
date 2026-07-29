@@ -241,6 +241,109 @@ def background(zone_index: int, zone_hue: int) -> pygame.Surface:
     return surf
 
 
+# === Parallax layers (Task 29 / gfx-parallax) ===
+# 5 pre-baked scrollable background layers (sky, far hills, mid hills,
+# near foliage, road) blit at parallax offsets [0, 0.15, 0.35, 0.6, 1.0]
+# from a single scroll accumulator. Cached per (zone_in_cycle, hue) so
+# the cache is bounded (9 zones x hues x 5 layers, not unbounded across
+# cycles). Each layer is a full-screen SRCALPHA surface; scrollable
+# layers tile horizontally at WINDOW_W so they wrap seamlessly.
+_PARALLAX_CACHE: dict[tuple, list] = {}
+
+
+def parallax_layers(zone_index: int, hue: int) -> list:
+    """Return 5 cached parallax background layers.
+
+    Layers (in draw order, with their parallax offsets):
+      0. Sky         (offset 0.0  — no scroll; gradient + moon + stars)
+      1. Far hills   (offset 0.15 — scrolls slowly; tileable silhouette)
+      2. Mid hills   (offset 0.35 — scrolls medium; tileable silhouette)
+      3. Near foliage(offset 0.6  — scrolls faster; bushes + torches)
+      4. Road        (offset 1.0  — scrolls full; road rect + lane lines)
+
+    Each layer is a full-screen (WINDOW_W x WINDOW_H) SRCALPHA surface
+    cached per (zone_in_cycle, hue) with ``convert_alpha`` so the cache
+    is bounded (9 zones x hues, not unbounded across cycles). The
+    scrollable layers (1-4) use sine frequencies that are integer
+    multiples of 2*pi/WINDOW_W so the hill silhouettes tile seamlessly
+    at WINDOW_W (the y at x=0 and x=WINDOW_W match, so wrapping is
+    invisible). The caller blits each layer at ``-int(scroll * offset)
+    % WINDOW_W`` and ``- int(scroll * offset) % WINDOW_W - WINDOW_W`` to
+    cover the screen.
+    """
+    in_cycle = zone_index % 9
+    key = ("parallax", in_cycle, hue)
+    cached = _PARALLAX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from theme import C, gradient_v
+    layers = []
+    # Layer 0: Sky (offset 0, no scroll). Gradient + moon + stars in the
+    # top portion (0..ROAD_TOP); transparent below so the hill + road
+    # layers composite underneath.
+    sky = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+    sky_top = hsl(hue, 0.5, 0.15)
+    sky_bottom = hsl(hue, 0.4, 0.25)
+    gradient_v(sky, pygame.Rect(0, 0, cfg.WINDOW_W, cfg.ROAD_TOP),
+               sky_top, sky_bottom)
+    pygame.draw.circle(sky, (240, 235, 220), (cfg.WINDOW_W - 120, 50), 28)
+    moon = pygame.Surface((70, 70), pygame.SRCALPHA)
+    pygame.draw.circle(moon, (240, 235, 220, 60), (35, 35), 34)
+    sky.blit(moon, (cfg.WINDOW_W - 155, 15))
+    for _ in range(60):
+        x = rng().randint(0, cfg.WINDOW_W)
+        y = rng().randint(0, cfg.ROAD_TOP - 10)
+        b = rng().randint(120, 200)
+        sky.set_at((x, y), (b, b, min(255, b + 30)))
+    layers.append(sky.convert_alpha())
+    # Layer 1: Far hills (offset 0.15, tileable at WINDOW_W). The hill
+    # line uses sin(x * 2*pi*4/WINDOW_W) so 4 peaks tile seamlessly.
+    fh = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+    hill_col = hsl(hue, 0.4, 0.18)
+    pts = [(0, cfg.ROAD_TOP)]
+    for x in range(0, cfg.WINDOW_W + 1, 20):
+        y = cfg.ROAD_TOP - 30 - (math.sin(x * 2 * math.pi * 4 / cfg.WINDOW_W) * 20 + 20)
+        pts.append((x, y))
+    pts.append((cfg.WINDOW_W, cfg.ROAD_TOP))
+    pygame.draw.polygon(fh, hill_col, pts)
+    layers.append(fh.convert_alpha())
+    # Layer 2: Mid hills (offset 0.35, tileable at WINDOW_W). 5 peaks.
+    mh = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+    mid_col = hsl(hue, 0.45, 0.13)
+    pts = [(0, cfg.ROAD_TOP)]
+    for x in range(0, cfg.WINDOW_W + 1, 30):
+        y = cfg.ROAD_TOP - 14 - (math.sin(x * 2 * math.pi * 5 / cfg.WINDOW_W + 1.2) * 12 + 12)
+        pts.append((x, y))
+    pts.append((cfg.WINDOW_W, cfg.ROAD_TOP))
+    pygame.draw.polygon(mh, mid_col, pts)
+    layers.append(mh.convert_alpha())
+    # Layer 3: Near foliage (offset 0.6, tileable at WINDOW_W). Bushes
+    # at 80px intervals + roadside torches at 200px intervals along the
+    # road edge. 80 divides WINDOW_W (1280/80=16) so the bushes tile.
+    nf = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+    foliage_col = hsl(hue, 0.5, 0.10)
+    for x in range(0, cfg.WINDOW_W, 80):
+        pygame.draw.circle(nf, foliage_col, (x + 20, cfg.ROAD_TOP - 4), 8)
+        pygame.draw.circle(nf, foliage_col, (x + 40, cfg.ROAD_TOP - 2), 6)
+    for x in range(80, cfg.WINDOW_W, 200):
+        pygame.draw.rect(nf, (40, 30, 30), (x, cfg.ROAD_TOP - 8, 3, 10))
+        pygame.draw.circle(nf, (255, 140, 60), (x + 1, cfg.ROAD_TOP - 12), 5)
+    layers.append(nf.convert_alpha())
+    # Layer 4: Road (offset 1.0, tileable at WINDOW_W). The road rect +
+    # lane lines. Lane lines at 64px intervals (64 divides WINDOW_W =
+    # 1280) so the lines tile seamlessly.
+    rd = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+    pygame.draw.rect(rd, C.road, (0, cfg.ROAD_TOP, cfg.WINDOW_W, cfg.ROAD_H))
+    pygame.draw.rect(rd, C.road_edge, (0, cfg.ROAD_TOP, cfg.WINDOW_W, 4))
+    pygame.draw.rect(rd, C.road_edge, (0, cfg.ROAD_BOTTOM - 4, cfg.WINDOW_W, 4))
+    for x in range(0, cfg.WINDOW_W, 64):
+        pygame.draw.rect(rd, C.lane_line,
+                         (x + 32, cfg.ROAD_TOP + cfg.ROAD_H // 2 - 2, 30, 4))
+    layers.append(rd.convert_alpha())
+    _PARALLAX_CACHE[key] = layers
+    return layers
+
+
 # === Particles ===
 class Particle:
     __slots__ = ("x", "y", "vx", "vy", "life", "max_life", "color", "size", "gravity")

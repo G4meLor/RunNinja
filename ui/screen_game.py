@@ -28,6 +28,15 @@ _SKILL_GLOW_DUR = 1.0
 # rather than a snap or a slow crawl.
 _GOLD_COUNT_DUR = 0.8
 
+# Task 29 (gfx-parallax): the parallax scroll offsets for the 5 background
+# layers (sky, far hills, mid hills, near foliage, road). The sky (offset
+# 0) does not scroll; the road (offset 1.0) scrolls at the full rate; the
+# hill + foliage layers scroll at intermediate rates for the parallax
+# effect. The screen blits each layer at ``-int(scroll * offset) %
+# WINDOW_W`` from a single ``scroll_accumulator`` that advances each
+# frame (pinned to 0 when reduced_motion is on or the render tier is low).
+PARALLAX_OFFSETS = (0.0, 0.15, 0.35, 0.6, 1.0)
+
 
 def _approach(current: float, target: float, max_delta: float) -> float:
     """Move ``current`` toward ``target`` by at most ``max_delta``."""
@@ -40,6 +49,12 @@ class GameScreen:
     def __init__(self, game) -> None:
         self.game = game
         self.lane_scroll = 0.0
+        # Task 29 (gfx-parallax): a single scroll accumulator that all 5
+        # parallax layers read. Advanced each frame by
+        # ``runner.scroll_speed() * dt`` (2x during Auto Katana); pinned
+        # to 0 when ``reduced_motion`` is on or the render tier is low
+        # (parallax disabled) so the layers do not scroll.
+        self.scroll_accumulator = 0.0
         self.toasts: list = []
         self._bg_key = None
         self.welcome_pending = None
@@ -288,7 +303,23 @@ class GameScreen:
         if crossed is not None:
             self.notify(f"Gold milestone: {format_number(crossed)}!", C.gold)
         self._prev_gold = actual_gold
-        # Lane scroll.
+        # Task 29 (gfx-parallax): advance the scroll accumulator. The
+        # accumulator is the single scroll value all 5 parallax layers
+        # read; each layer blits at ``offset * accumulator``. The
+        # accumulator advances at ``runner.scroll_speed() * dt`` (2x
+        # during Auto Katana). Pinned to 0 when ``reduced_motion`` is on
+        # or the render tier is low (parallax disabled) so the layers do
+        # not scroll — the accessibility gate and the tier never
+        # diverge (both read ``effective_render_quality`` →
+        # ``parallax_enabled``).
+        from core.quality import parallax_enabled
+        if parallax_enabled(state.effective_render_quality()):
+            self.scroll_accumulator += self.game.runner.scroll_speed() * dt
+        else:
+            self.scroll_accumulator = 0.0
+        # Lane scroll (kept for backward compat; the parallax road layer
+        # now carries the lane lines, but lane_scroll is still advanced
+        # so any reader sees a moving value).
         self.lane_scroll = (self.lane_scroll + 90 * dt) % 60
         # Toasts.
         for t in self.toasts:
@@ -304,18 +335,37 @@ class GameScreen:
         world = runner.world
         ox, oy = self.game.shake_offset()
 
-        from assets import background
-        # The background keys on (zone_index, hue); past zone 9 the 9
-        # themed zones repeat, so the in-cycle zone index (0..8) keeps
-        # the cache keyed by the visible zone while the cycle scales
-        # stats. This avoids unbounded background cache growth.
-        bg = background(world.zone_in_cycle, world.zone["hue"])
-        surf.blit(bg, (ox, oy))
-
-        ly = cfg.ROAD_TOP + cfg.ROAD_H // 2 - 2
-        for x in range(-60, cfg.WINDOW_W, 60):
-            xx = (x - self.lane_scroll) % (cfg.WINDOW_W + 60) - 30
-            pygame.draw.rect(surf, C.lane_line, (xx, ly + oy, 30, 4))
+        # Task 29 (gfx-parallax): blit 5 pre-baked scrollable background
+        # layers at parallax offsets [0, 0.15, 0.35, 0.6, 1.0] from a
+        # single scroll accumulator. The layers are cached per
+        # (zone_in_cycle, hue) in assets.parallax_layers; each is a
+        # full-screen SRCALPHA surface with convert_alpha. The sky
+        # (offset 0) does not scroll; the road (offset 1.0) scrolls at
+        # the full rate; the hill + foliage layers scroll at
+        # intermediate rates for the parallax effect. The accumulator
+        # is pinned to 0 when reduced_motion is on or the render tier is
+        # low (parallax disabled) so the layers do not scroll.
+        from assets import parallax_layers
+        from core.quality import parallax_enabled
+        layers = parallax_layers(world.zone_in_cycle, world.zone["hue"])
+        scroll = (self.scroll_accumulator
+                  if parallax_enabled(state.effective_render_quality())
+                  else 0.0)
+        for i, (layer, offset) in enumerate(zip(layers, PARALLAX_OFFSETS)):
+            if offset == 0:
+                # Non-scrollable layer (sky): blit at the shake offset.
+                surf.blit(layer, (ox, oy))
+            else:
+                # Scrollable layer: blit at two positions to cover the
+                # screen with seamless tiling. The layer tiles at
+                # WINDOW_W (the hill sine frequencies are integer
+                # multiples of 2*pi/WINDOW_W; the lane lines + foliage
+                # use spacings that divide WINDOW_W), so the wrap is
+                # invisible.
+                lw = layer.get_width()
+                sx = -int(scroll * offset) % lw
+                surf.blit(layer, (sx + ox, oy))
+                surf.blit(layer, (sx - lw + ox, oy))
 
         # Enemies.
         from assets import enemy_surface

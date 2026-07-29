@@ -263,6 +263,24 @@ class Runner:
                 self.skills[sid] = sk
 
     # -----------------------------------------------------------------
+    # Task 29 (gfx-parallax): scroll accumulator speed
+    # -----------------------------------------------------------------
+    def scroll_speed(self) -> float:
+        """The base scroll speed for the parallax layers (pixels/second).
+
+        Returns 90.0 normally, 180.0 (2x) when Auto Katana
+        (``energy_active``) is engaged — the brief calls for the parallax
+        to visibly accelerate 2x during Auto Katana. The screen reads
+        this to advance its ``scroll_accumulator`` each frame; the
+        accumulator is pinned to 0 when ``reduced_motion`` is on or the
+        render tier is low (see ``ui.screen_game``).
+        """
+        base = 90.0
+        if self.state.energy_active:
+            base *= 2.0
+        return base
+
+    # -----------------------------------------------------------------
     # FX callbacks
     # -----------------------------------------------------------------
     def _on_enemy_dmg(self, x, y, amount, *, is_crit=False, is_boss=False) -> None:
