@@ -485,6 +485,13 @@ class GameScreen:
         runner.ninja_fx.draw(surf)
         runner.skill_fx.draw(surf)
         runner.firefly_fx.draw(surf)
+        # Task 31 (gfx-weather): per-zone weather particles. Drawn after
+        # the parallax layers + the road + the FX, before the boss intro
+        # + zone transition overlay, so the weather overlays the road but
+        # is under the boss banner + zone transition. The weather system
+        # gates itself (reduced_motion / low tier -> static tint, no
+        # particles); the screen does not need to gate here.
+        runner.weather_fx.draw(surf)
         # Boss/mini-boss intro + health bar overlay. The mini-boss intro
         # is brief and does not keep a persistent bar; the zone boss bar
         # stays until the boss dies.

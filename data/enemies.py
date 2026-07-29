@@ -43,7 +43,10 @@ ZONES: list[dict] = [
         # Zone 0: the starting village — neutral (no element). The
         # tutorial zone; the type chart is a no-op here so a new player
         # never sees a damage penalty before they unlock the Godai gate.
+        # Weather: "none" (the tutorial zone stays clear so a new player
+        # is not overwhelmed — the weather unlocks visually from zone 1).
         "id": "village", "name": "Hidden Village", "hue": 90,
+        "weather": "none",
         "enemies": [
             EnemyDef("e_bandit", "Bandit", "bandit", 0, 0.8, 0.7, 1.0, 20, 16,
                      lore="A common thug who preys on travellers leaving the village."),
@@ -55,7 +58,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 1: the bamboo forest — wind-themed (the swaying grove).
+        # Weather: rain (the brief's hero zone).
         "id": "bamboo", "name": "Bamboo Forest", "hue": 120,
+        "weather": "rain",
         "enemies": [
             EnemyDef("e_ronin", "Ronin", "bandit", 0, 1.0, 1.0, 1.0, 22, 18, element="wind",
                      lore="A masterless samurai who wanders the grove, seeking a new lord."),
@@ -68,7 +73,9 @@ ZONES: list[dict] = [
     {
         # Zone 2: the cave — wind-themed (the howling echoes). The bat
         # swarm and the cave drafts are wind-flavored.
+        # Weather: "none" (the cave is underground; no weather).
         "id": "cave", "name": "Cave of Echoes", "hue": 220,
+        "weather": "none",
         "enemies": [
             EnemyDef("e_bat", "Cave Bat", "beast", 280, 0.7, 0.8, 1.3, 30, 14, element="wind",
                      lore="A swarm-dweller that rides the cave drafts and drinks blood."),
@@ -80,7 +87,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 3: the yokai marsh — water-themed (the flooded bog).
+        # Weather: "none" (the marsh is already wet; no rain).
         "id": "marsh", "name": "Yokai Marsh", "hue": 160,
+        "weather": "none",
         "enemies": [
             EnemyDef("e_yokai", "Yokai", "yokai", 270, 1.2, 1.3, 1.4, 26, 18, rare_drop=0.05, element="water",
                      lore="A mischievous spirit that drowns travellers in the bog's fog."),
@@ -92,7 +101,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 4: the sunken ruins — water-themed (the drowned halls).
+        # Weather: "none" (the ruins are already drowned; no rain).
         "id": "ruins", "name": "Sunken Ruins", "hue": 40,
+        "weather": "none",
         "enemies": [
             EnemyDef("e_guardian", "Guardian", "golem", 200, 2.2, 1.6, 1.6, 14, 26, rare_drop=0.06, element="water",
                      lore="A stone sentinel who guards the drowned halls, even in death."),
@@ -104,7 +115,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 5: the oni volcano — fire-themed (the molten peak).
+        # Weather: ash (the brief's hero zone — falling embers).
         "id": "volcano", "name": "Oni Volcano", "hue": 10,
+        "weather": "ash",
         "enemies": [
             EnemyDef("e_imp", "Fire Imp", "demon", 0, 1.4, 1.8, 1.8, 30, 16, rare_drop=0.07, element="fire",
                      lore="A mischievous flame-sprite that dances on the molten rock."),
@@ -116,7 +129,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 6: the abyss — fire-themed (the burning deep).
+        # Weather: "none" (the abyss is underground; no weather).
         "id": "abyss", "name": "The Abyss", "hue": 280,
+        "weather": "none",
         "enemies": [
             EnemyDef("e_demon", "Demon", "demon", 350, 2.0, 2.2, 2.2, 26, 22, rare_drop=0.08, element="fire",
                      lore="A denizen of the deep that burns with the abyss's fire."),
@@ -128,7 +143,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 7: the sky citadel — wind-themed (the high winds).
+        # Weather: snow (the brief's hero zone — the high cold).
         "id": "sky", "name": "Sky Citadel", "hue": 200,
+        "weather": "snow",
         "enemies": [
             EnemyDef("e_valkyrie", "Fallen Valkyrie", "wraith", 200, 2.2, 2.4, 2.4, 30, 22, rare_drop=0.09, element="wind",
                      lore="A winged warrior who fell from the citadel and now haunts it."),
@@ -140,7 +157,9 @@ ZONES: list[dict] = [
     },
     {
         # Zone 8: the cosmic void — void-themed (the end of every road).
+        # Weather: drift (the brief's hero zone — void motes drifting).
         "id": "void", "name": "Cosmic Void", "hue": 270,
+        "weather": "drift",
         "enemies": [
             EnemyDef("e_voidling", "Voidling", "wraith", 280, 2.6, 2.8, 2.8, 28, 22, rare_drop=0.10, element="void",
                      lore="A fragment of the void given form, hungry for the living."),

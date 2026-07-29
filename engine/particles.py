@@ -288,6 +288,38 @@ class ParticleSystem2:
                     spin=(ang if spin else r.uniform(0, math.tau)),
                     spin_speed=r.uniform(-4.0, 4.0))
 
+    # ------------------------------------------------------------------
+    # Directional emit (Task 31 / gfx-weather)
+    # ------------------------------------------------------------------
+    def emit(self, x: float, y: float, color: Tuple[int, int, int],
+             count: int = 1, *, vx_range: Tuple[float, float] = (0.0, 0.0),
+             vy_range: Tuple[float, float] = (0.0, 0.0),
+             life: float = 1.0, size: int = 3,
+             gravity: float = 0.0, shape: str = SHAPE_CIRCLE,
+             glow: Optional[bool] = None,
+             fade_color: Optional[Tuple[int, int, int]] = None,
+             spin_speed_range: Tuple[float, float] = (-2.0, 2.0)) -> None:
+        """Spawn particles at (x, y) with velocities sampled from the
+        given ranges. Used by the weather system to spawn rain/snow/ash
+        from the top edge with a downward velocity (not a radial burst).
+
+        ``vx_range`` / ``vy_range`` are (min, max) tuples; each particle's
+        velocity is sampled uniformly from the range. The cap is honoured
+        (no particle is spawned past ``max_particles``), so the weather
+        count cap is the same gate as the combat cap.
+        """
+        if glow is None:
+            glow = self.default_glow
+        r = rng()
+        for p in self._spawn(count):
+            vx = r.uniform(*vx_range)
+            vy = r.uniform(*vy_range)
+            p.reset(x, y, vx, vy, life * r.uniform(0.8, 1.2), color,
+                    size=size, gravity=gravity, shape=shape, glow=glow,
+                    fade_color=fade_color,
+                    spin=r.uniform(0, math.tau),
+                    spin_speed=r.uniform(*spin_speed_range))
+
     def spark_burst(self, x: float, y: float, color: Tuple[int, int, int],
                     count: int = 10, speed: float = 200, life: float = 0.3,
                     size: int = 4, *, gravity: float = 120.0,

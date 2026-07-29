@@ -33,6 +33,7 @@ from engine.skill_fx import SkillFxSystem
 from engine.zone_fx import ZoneFxSystem
 from engine.boss_fx import BossFxSystem
 from engine.firefly_fx import FireflyFxSystem
+from engine.weather_fx import WeatherFXSystem
 
 
 COMBO_WINDOW = 3.0       # seconds before combo decays
@@ -169,6 +170,16 @@ class Runner:
         self.zone_fx = ZoneFxSystem()
         self.boss_fx = BossFxSystem()
         self.firefly_fx = FireflyFxSystem()
+        # Task 31 (gfx-weather): per-zone weather particles. The system
+        # spawns zone-appropriate particles from the top edge (rain in
+        # Bamboo, ash in Volcano, snow in Sky, void drift in Void) using
+        # ParticleSystem2 presets. Pooled (no per-frame allocations).
+        # Capped per weather type (rain <=120, snow <=60, ash/drift <=80).
+        # Under reduced_motion OR the low render tier, falls back to a
+        # static tint overlay (no particles). The screen reads the current
+        # zone's ``weather`` key (added by Task 31) via the world's zone
+        # dict and calls ``set_weather`` on zone change.
+        self.weather_fx = WeatherFXSystem()
         # Active skills (only those unlocked).
         self.skills: dict[str, ActiveSkill] = {}
         self._refresh_skills()
@@ -843,6 +854,22 @@ class Runner:
         self.zone_fx.update(dt)
         self.boss_fx.update(dt)
         self.firefly_fx.update(dt)
+        # Task 31 (gfx-weather): sync the weather FX to the current zone
+        # each tick. The world's zone dict has a ``weather`` key (added by
+        # Task 31); the screen reads it via the world. Sync here so the
+        # weather follows zone changes (the world advances zone_index on
+        # a boss kill; the next tick the weather FX reads the new zone).
+        # The reduced_motion + render-tier gates are read from state here
+        # so the weather respects the same gates as the other FX.
+        from data.enemies import zone_by_index
+        zone = zone_by_index(self.state.zone_index)
+        self.weather_fx.set_weather(
+            zone.get("weather", "none"),
+            self.state.zone_index,
+        )
+        self.weather_fx.reduced_motion = self.state.reduced_motion
+        self.weather_fx.quality = self.state.effective_render_quality()
+        self.weather_fx.update(dt)
 
         # Notifications decay.
         self.notifications = [(t, life - dt, col) for (t, life, col) in self.notifications
@@ -1386,6 +1413,9 @@ class Runner:
         self.combo_fx.reset()
         self.ninja_fx._arcs.clear() if hasattr(self.ninja_fx, '_arcs') else None
         self.skill_fx.effects.clear() if hasattr(self.skill_fx, 'effects') else None
+        # Task 31: clear the weather FX on ascension (the new run starts
+        # in the village, weather "none" — the next tick re-syncs).
+        self.weather_fx.particles.clear()
 
 
 def _upgrade_pct(state: GameState, key: str) -> float:
