@@ -12,7 +12,7 @@ import time
 import config as cfg
 from core.state import GameState
 from utils import rng
-from core.bonuses import aggregate_bonuses
+from core.bonuses import aggregate_bonuses, effective_gear_slots
 from core.quests import (maybe_refresh_dailies, update_daily_progress,
                          check_achievements, award_boss_token,
                          maybe_refresh_weeklies, update_weekly_progress,
@@ -993,7 +993,7 @@ class Runner:
         contributions stack additively with the skill tree + pets +
         tokens + heritage contributions to the same effect keys.
         """
-        slot = rng().choice(cfg.GEAR_SLOTS)
+        slot = rng().choice(effective_gear_slots(self.state))
         # Roll a rarity from GACHA_RATES (reuse the gacha distribution).
         rarities = tuple(cfg.GACHA_RATES.keys())
         weights = [cfg.GACHA_RATES[r] for r in rarities]
@@ -1410,6 +1410,19 @@ class Runner:
 
     def reset_for_ascension(self) -> None:
         self.world.reset_for_ascension()
+        # Task 35 (gp-reincarnation-perks): seed the world's zone from
+        # ``state.zone_index`` so the ``start_zone_3`` Soul Tree perk's
+        # effect survives the reset. ``reincarnate()`` sets
+        # ``state.zone_index = 2`` (the perk) before calling this; the
+        # ``world.reset_for_ascension()`` above reset ``world.zone_index``
+        # to 0, and the next ``update`` tick would sync ``state.zone_index``
+        # back to ``world.zone_index`` (0), overwriting the perk. Seeding
+        # the world from state here makes both paths work:
+        #   * ascension: ``state.zone_index = 0`` (ascend resets it) ->
+        #     ``world.zone_index = 0`` (no change).
+        #   * reincarnation + perk: ``state.zone_index = 2`` (reincarnate) ->
+        #     ``world.zone_index = 2`` (the perk's head start).
+        self.world.zone_index = self.state.zone_index
         self.ninja = make_ninja(self.state)
         self._refresh_skills()
         self.state.energy = self.state.energy_max

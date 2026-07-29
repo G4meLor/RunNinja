@@ -143,15 +143,15 @@ class AscendScreen:
             else:
                 label = f"{perk.name} ({perk.cost} souls)"
                 enabled = False
-            # Layout: a 2x2 grid in the Soul Tree panel area. The panel
-            # is at x=640, y=130, w=620, h=530. The grid starts at
-            # y=270 (below the "Soul Tree" header). Each button is 280x48;
-            # the grid is 2 columns x 2 rows.
-            col = i % 2
-            row = i // 2
-            bx = 660 + col * 290
-            by = 270 + row * 56
-            btn = Button((bx, by, 280, 48), label,
+            # Layout: a single column in the Soul Tree panel area. The
+            # panel is at x=890, y=130, w=380, h=530. The grid starts at
+            # y=260 (below the "Soul Tree" header at y=260). Each button
+            # is 348x48 (panel.w - 32 margin); the 4 perks stack
+            # vertically (4 rows x 1 column) so the labels fit.
+            row = i
+            bx = 906
+            by = 260 + row * 56
+            btn = Button((bx, by, 348, 48), label,
                          on_click=lambda pid=perk.id: self._do_purchase_perk(pid),
                          enabled=enabled, color=(180, 120, 255))
             self._soul_btns.append(btn)
@@ -290,39 +290,39 @@ class AscendScreen:
         # state). The panel is always shown (so the player can see the
         # gate); the Reincarnation button is disabled when the gate is not
         # met. The perks are clickable when the player can afford them.
-        # The panel is on the right side of the screen (x = 620) so it
-        # doesn't overlap the ascend panels (which are centered at
-        # WINDOW_W // 2 - 240, width 480 -> right edge at 760; the Soul
-        # Tree panel starts at x = 620 to overlap minimally -- the ascend
-        # panels end at y = 530, the Soul Tree panel starts at y = 130,
-        # so the two are side-by-side, not overlapping vertically).
-        soul_panel = pygame.Rect(640, 130, 620, 530)
+        # The panel is placed to the RIGHT of the ascend panels (which are
+        # centered at WINDOW_W // 2 - 240 = 400, width 480 -> right edge at
+        # 880). The Soul Tree panel starts at x = 890 (10px gap) and is
+        # 380px wide (right edge at 1270, 10px margin from WINDOW_W=1280).
+        # The layout math: panel.left (890) >= ascend.right (880) + 10, and
+        # panel.right (1270) <= WINDOW_W (1280) - 10.
+        soul_panel = pygame.Rect(890, 130, 380, 530)
         draw_panel(surf, soul_panel, fill=(30, 20, 50), border=(180, 120, 255),
                   border_w=2)
         draw_text(surf, "Reincarnation",
                   (soul_panel.x + 16, soul_panel.y + 10),
-                  font_lg(bold=True), (180, 120, 255))
+                  font_md(bold=True), (180, 120, 255))
         draw_text(surf,
-                  "Hard reset for Souls + Soul Tree perks (permanent).",
-                  (soul_panel.x + 16, soul_panel.y + 44),
+                  "Hard reset for Souls + Soul Tree perks.",
+                  (soul_panel.x + 16, soul_panel.y + 36),
                   font_xs(), C.text_dim)
         # Cosmic Forge count (the persistent anchor, max 10).
-        forge_y = soul_panel.y + 72
+        forge_y = soul_panel.y + 64
         draw_text(surf, f"Cosmic Forge: {state.cosmic_forge}/10",
-                  (soul_panel.x + 16, forge_y), font_md(bold=True),
+                  (soul_panel.x + 16, forge_y), font_sm(bold=True),
                   C.gold)
-        forge_bar = pygame.Rect(soul_panel.x + 16, forge_y + 22, 200, 12)
+        forge_bar = pygame.Rect(soul_panel.x + 16, forge_y + 20, 160, 10)
         draw_bar(surf, forge_bar, state.cosmic_forge / 10.0,
                  fill=C.gold, bg=C.mp_bg, border=C.panel_border)
         # Souls balance (the reincarnation currency).
         draw_text(surf, f"Souls: {state.souls}",
-                  (soul_panel.x + 240, forge_y), font_md(bold=True),
+                  (soul_panel.x + 200, forge_y), font_sm(bold=True),
                   C.soul)
         # Reincarnation gate status (what's missing).
-        gate_y = soul_panel.y + 110
+        gate_y = soul_panel.y + 100
         can_reinc = asc.can_reincarnate(state)
         if can_reinc:
-            draw_text(surf, "Gate: Singularity + 10 ascensions - READY",
+            draw_text(surf, "Gate: READY",
                       (soul_panel.x + 16, gate_y), font_sm(bold=True),
                       C.text_good)
         else:
@@ -332,16 +332,16 @@ class AscendScreen:
             need_asc = max(0, asc.REINCARNATION_ASCENSION_GATE
                            - state.total_ascensions)
             draw_text(surf,
-                      f"Gate: need Singularity ({tier_name}, +{need_tier} tier)"
-                      f" + {need_asc} more ascensions",
-                      (soul_panel.x + 16, gate_y), font_sm(), C.text_warn)
+                      f"Gate: need Singularity"
+                      f" (+{need_tier} tier, +{need_asc} asc)",
+                      (soul_panel.x + 16, gate_y), font_xs(), C.text_warn)
         # Soul Tree perks (the 4 run-breaking verbs).
-        tree_y = soul_panel.y + 140
+        tree_y = soul_panel.y + 130
         draw_text(surf, "Soul Tree",
                   (soul_panel.x + 16, tree_y), font_md(bold=True),
                   (180, 120, 255))
         draw_text(surf,
-                  "Each perk is a run-breaking verb (permanent).",
+                  "Each perk is a run-breaking verb.",
                   (soul_panel.x + 16, tree_y + 22), font_xs(),
                   C.text_dim)
         # The perk buttons are cached on ``self._soul_btns`` (built in
@@ -351,7 +351,7 @@ class AscendScreen:
             b.draw(surf)
         # Perk descriptions (below the buttons).
         from data.skill_tree import SOUL_TREE_PERKS
-        desc_y = soul_panel.y + 240
+        desc_y = soul_panel.y + 260
         for i, perk in enumerate(SOUL_TREE_PERKS):
             unlocked = perk.id in state.soul_tree
             color = C.text_good if unlocked else C.text_dim

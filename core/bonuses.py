@@ -460,7 +460,9 @@ def forge_buy_legendary(state: GameState, slot: str) -> bool:
     for ``cfg.FORGE_LEGENDARY_AMBER`` amber.
 
     Requirements:
-      * ``slot`` is a valid gear slot (in ``cfg.GEAR_SLOTS``).
+      * ``slot`` is a valid gear slot (in ``effective_gear_slots(state)``
+        -- the base 4 slots, plus the 5th ``spirit`` slot when the
+        ``extra_equip_slot`` Soul Tree perk is active).
       * ``state.amber >= cfg.FORGE_LEGENDARY_AMBER``.
 
     Returns ``True`` if the purchase was applied, ``False`` otherwise (no
@@ -475,7 +477,7 @@ def forge_buy_legendary(state: GameState, slot: str) -> bool:
     for a boss drop can do so with amber; a player who would rather enhance
     or reroll an existing piece can do so with gold + amber.
     """
-    if slot not in cfg.GEAR_SLOTS:
+    if slot not in effective_gear_slots(state):
         return False
     if state.amber < cfg.FORGE_LEGENDARY_AMBER:
         return False

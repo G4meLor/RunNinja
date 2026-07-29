@@ -18,7 +18,8 @@ from ui.widgets import Button, currency_pill
 from utils import format_number
 from engine.ninja import compute_ninja_stats, _upgrade_value, _ascend_tier_mult
 from core.bonuses import (aggregate_bonuses, forge_enhance, forge_reroll,
-                          forge_salvage, forge_buy_legendary)
+                          forge_salvage, forge_buy_legendary,
+                          effective_gear_slots)
 from data import skill_tree as st
 from data import pets as pet_def
 
@@ -494,19 +495,28 @@ class HeroScreen:
         """A hashable snapshot of the state that affects the forge buttons'
         ``enabled`` flags.
 
-        The snapshot is ``(gear-tuple, gold, amber)`` where ``gear-tuple``
-        is a tuple of ``(slot, affix, value, rarity)`` tuples sorted by
-        slot. The snapshot is used by ``_maybe_rebuild_forge_buttons`` to
-        detect when the live state has diverged from the state the cached
-        buttons were built for (e.g. the player spent gold and can no
-        longer afford Enhance, or a boss drop added a new piece).
+        The snapshot is ``(gear-tuple, gold, amber, slot_count)`` where
+        ``gear-tuple`` is a tuple of ``(slot, affix, value, rarity)``
+        tuples sorted by slot. The snapshot is used by
+        ``_maybe_rebuild_forge_buttons`` to detect when the live state
+        has diverged from the state the cached buttons were built for
+        (e.g. the player spent gold and can no longer afford Enhance, or
+        a boss drop added a new piece, or the ``extra_equip_slot`` perk
+        added the 5th ``spirit`` slot so the button row count changed).
+        The ``slot_count`` is the effective gear slot count (4 or 5);
+        when it changes (the perk is unlocked), the buttons are rebuilt
+        so the 5th slot's buttons appear.
         """
         state = self.game.state
         gear_tuple = tuple(
             (slot, g.get("affix"), g.get("value"), g.get("rarity"))
             for slot, g in state.gear.items()
         )
-        return (gear_tuple, state.gold, state.amber)
+        # Include the effective slot count so the buttons are rebuilt when
+        # the ``extra_equip_slot`` perk is unlocked (the 5th slot adds a
+        # new row of buttons).
+        slot_count = len(effective_gear_slots(state))
+        return (gear_tuple, state.gold, state.amber, slot_count)
 
     def _maybe_rebuild_forge_buttons(self) -> None:
         """Rebuild ``self._forge_btns`` if the gear/currency state has
@@ -540,7 +550,13 @@ class HeroScreen:
         state = self.game.state
         buttons: list[Button] = []
         px, py, pw, ph = self._FORGE_PANEL_RECT
-        for i, slot in enumerate(cfg.GEAR_SLOTS):
+        # Task 35: iterate the effective gear slots (4 base + the 5th
+        # ``spirit`` slot when the ``extra_equip_slot`` Soul Tree perk is
+        # active). Without the perk, the loop is the base 4 (same as
+        # before); with the perk, the 5th slot gets its own row of forge
+        # buttons. The slot count is in the snapshot so the buttons are
+        # rebuilt when the perk is unlocked.
+        for i, slot in enumerate(effective_gear_slots(state)):
             y = self._FORGE_ROW_Y0 + i * self._FORGE_ROW_H
             g = state.gear.get(slot)
             # Enhance: gold sink, enabled if the slot has a piece + the
@@ -632,8 +648,11 @@ class HeroScreen:
         currency_pill(surf, cpx + 130, cpy, "Amber", str(state.amber),
                       (255, 180, 60))
 
-        # Per-slot rows.
-        for i, slot in enumerate(cfg.GEAR_SLOTS):
+        # Per-slot rows. Task 35: iterate the effective gear slots (4
+        # base + the 5th ``spirit`` slot when the ``extra_equip_slot`` perk
+        # is active) so the forge panel shows the 5th slot when the perk
+        # is unlocked (and 4 when it's not).
+        for i, slot in enumerate(effective_gear_slots(state)):
             y = self._FORGE_ROW_Y0 + i * self._FORGE_ROW_H
             r = pygame.Rect(panel.x + 14, y, panel.w - 28,
                             self._FORGE_ROW_H - 8)
