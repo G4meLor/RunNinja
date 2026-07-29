@@ -42,7 +42,8 @@ class AscendScreen:
     def __init__(self, game) -> None:
         self.game = game
         self.btn_ascend = Button((cfg.WINDOW_W // 2 - 120, cfg.WINDOW_H - 100, 240, 60),
-                                  "Ascend", on_click=self._do_ascend, color=(150, 80, 220))
+                                  "Ascend", on_click=self._do_ascend, color=(150, 80, 220),
+                                  sound="ui_confirm")
         self.btn_back = Button((16, cfg.WINDOW_H - 60, 120, 44), "Back",
                                on_click=lambda: self.game.set_screen("game"))
         self.buttons = [self.btn_ascend, self.btn_back]
@@ -55,7 +56,7 @@ class AscendScreen:
         self.btn_reincarnate = Button(
             (cfg.WINDOW_W - 280, cfg.WINDOW_H - 100, 240, 60),
             "Reincarnate", on_click=self._do_reincarnate,
-            color=(180, 120, 255))
+            color=(180, 120, 255), sound="ui_confirm")
         self.buttons.append(self.btn_reincarnate)
         self.reincarnate_pending = False
         self.reincarnate_t = 0.0
@@ -157,6 +158,16 @@ class AscendScreen:
             self._soul_btns.append(btn)
 
     def handle(self, event):
+        # Task 37 (pl-music-sfx): pass ``state.sound_on`` to each button
+        # so the UI click sound is gated on the SFX toggle. The Ascend +
+        # Reincarnate buttons use the ``ui_confirm`` sound (a two-click
+        # confirm -- the confirm action gets the confirm sound, not the
+        # arming click; the arming click is a plain ``ui_click``).
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
+        for b in self._soul_btns:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         # Soul Tree perk buttons (cached; rebuilt in update/draw).

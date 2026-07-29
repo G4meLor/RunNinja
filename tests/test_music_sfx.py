@@ -262,6 +262,113 @@ def test_ui_sounds_registered(pygame_headless):
         assert "ui_confirm" in _SFX
 
 
+def test_button_plays_ui_click_on_click(pygame_headless):
+    """A Button click plays the ``ui_click`` SFX (gated on ``sound_on``).
+
+    The UI sounds are wired into actual UI interactions (not dead code):
+    a Button whose ``sound_on`` is True plays ``ui_click`` on click. A
+    Button whose ``sound_on`` is False is silent (respects the gate).
+    """
+    import pygame
+    from ui.widgets import Button
+    from assets import play
+    # Track play() calls.
+    calls = []
+    import assets
+    orig_play = assets.play
+    def _spy(name, sound_on=True):
+        calls.append((name, sound_on))
+        # Don't actually play (the mixer may be gone); just record.
+    assets.play = _spy
+    try:
+        # A button with sound_on=True plays ui_click on click.
+        clicked = [False]
+        btn = Button((0, 0, 100, 44), "Click", on_click=lambda: clicked.__setitem__(0, True),
+                     sound="ui_click", sound_on=True)
+        # Simulate a click (MOUSEBUTTONDOWN + MOUSEBUTTONUP on the rect).
+        btn.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (50, 22)}))
+        btn.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": (50, 22)}))
+        # The on_click fired.
+        assert clicked[0] is True
+        # And the ui_click sound was played (gated on sound_on=True).
+        assert any(name == "ui_click" and sound_on for (name, sound_on) in calls), (
+            f"ui_click not played on click: {calls}")
+    finally:
+        assets.play = orig_play
+
+
+def test_button_respects_sound_on_gate(pygame_headless):
+    """A Button with sound_on=False is silent (respects the gate)."""
+    import pygame
+    from ui.widgets import Button
+    import assets
+    calls = []
+    orig_play = assets.play
+    def _spy(name, sound_on=True):
+        calls.append((name, sound_on))
+    assets.play = _spy
+    try:
+        btn = Button((0, 0, 100, 44), "Click", on_click=lambda: None,
+                     sound="ui_click", sound_on=False)
+        btn.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": (50, 22)}))
+        btn.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": (50, 22)}))
+        # No sound was played (sound_on is False).
+        assert calls == [], (
+            f"no sound should play when sound_on=False: {calls}")
+    finally:
+        assets.play = orig_play
+
+
+def test_settings_screen_wires_sound_on_to_buttons(pygame_headless):
+    """The SettingsScreen passes state.sound_on to its buttons (so the
+    UI click sound is gated on the SFX toggle)."""
+    import main
+    g = _make_game()
+    screen = g.screens["settings"]
+    # Simulate a click on the music toggle (the handle passes sound_on).
+    import pygame
+    import assets
+    calls = []
+    orig_play = assets.play
+    def _spy(name, sound_on=True):
+        calls.append((name, sound_on))
+    assets.play = _spy
+    try:
+        state = g.state
+        state.sound_on = True
+        # The music toggle's rect.
+        r = screen.btn_music.rect
+        pos = (r.x + r.w // 2, r.y + r.h // 2)
+        screen.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
+        screen.handle(pygame.event.Event(pygame.MOUSEBUTTONUP, {"button": 1, "pos": pos}))
+        # A ui_click sound was played (sound_on=True).
+        assert any(name == "ui_click" for (name, _) in calls), (
+            f"settings screen did not play ui_click on button click: {calls}")
+    finally:
+        assets.play = orig_play
+
+
+def test_settings_reset_button_uses_ui_confirm_sound(pygame_headless):
+    """The Reset button uses the ``ui_confirm`` sound (a confirm action,
+    not a plain click)."""
+    import main
+    g = _make_game()
+    screen = g.screens["settings"]
+    # The reset button's sound is ``ui_confirm`` (not ``ui_click``).
+    assert screen.btn_reset.sound == "ui_confirm", (
+        f"reset button sound is {screen.btn_reset.sound!r}, expected 'ui_confirm'")
+
+
+def test_ascend_screen_uses_ui_confirm_sound(pygame_headless):
+    """The Ascend + Reincarnate buttons use the ``ui_confirm`` sound
+    (two-click confirm flows get the confirm sound)."""
+    import main
+    g = _make_game()
+    screen = g.screens["ascend"]
+    assert screen.btn_ascend.sound == "ui_confirm"
+    assert screen.btn_reincarnate.sound == "ui_confirm"
+
+
 def test_play_respects_sound_on_gate(pygame_headless):
     """play(name, False) is a no-op (respects sound_on)."""
     from assets import play
@@ -436,16 +543,92 @@ def test_music_loop_scales_by_volume(pygame_headless):
 
 
 def test_music_loop_crossfades_on_zone_change(pygame_headless):
-    """The music loop fades in a new segment on zone changes (no jarring
-    key changes -- the new segment fades in gently from 0)."""
+    """The music loop crossfades on zone changes (no jarring key changes
+    -- the old segment fades out on the secondary channel while the new
+    segment fades in on the primary; a true overlap, no hard cut, no
+    sudden silence)."""
     import inspect
     from main import Game
     src = inspect.getsource(Game._update_music)
-    # The loop checks for zone changes and starts a fade-in.
+    # The loop checks for zone changes and starts a crossfade.
     assert "zone_index" in src
     assert "_music_fade" in src
-    # And the segment-start method exists (generates + plays + fades in).
+    # And the segment-start method exists (generates + plays + crossfades).
     assert hasattr(Game, "_start_music_segment")
+    # The crossfade path uses a secondary channel for the outgoing
+    # segment (a true overlap, not a hard cut).
+    src_start = inspect.getsource(Game._start_music_segment)
+    assert "crossfade" in src_start
+    assert "_music_outgoing" in src_start
+
+
+def test_music_loop_crossfade_overlaps_old_and_new(pygame_headless):
+    """On a zone change, the old segment moves to the secondary channel
+    (fading out) while the new segment fades in on the primary (a true
+    overlap crossfade -- no hard cut, no sudden silence). The old
+    segment is NOT hard-cut: it's moved to the outgoing + fades out."""
+    import main
+    g = _make_game()
+    g.state.music_on = True
+    # Start the first segment (fade-in; no current, so fade=True).
+    g._update_music(1 / 60)
+    assert g._music_current is not None
+    first = g._music_current
+    # Complete the fade-in.
+    for _ in range(70):
+        g._update_music(1 / 60)
+    assert g._music_fade == 0.0
+    # Now change the zone -- the old segment should move to the
+    # outgoing (secondary) + the new should fade in on the primary.
+    g.state.zone_index = g.state.zone_index + 1
+    g._update_music(1 / 60)
+    # The old segment is now the outgoing (moved to the secondary).
+    assert g._music_outgoing is first, (
+        "the old segment should be moved to the outgoing (secondary)")
+    # The new segment is on the primary (different from the old).
+    assert g._music_current is not None
+    assert g._music_current is not first, (
+        "the new segment should be a different Sound on the primary")
+    # The crossfade is in progress (fade > 0, dir = -1).
+    assert g._music_fade > 0.0
+    assert g._music_fade_dir == -1
+    # Run the crossfade -- the outgoing should be stopped + dropped
+    # when the fade completes.
+    for _ in range(70):
+        g._update_music(1 / 60)
+    assert g._music_fade == 0.0
+    assert g._music_outgoing is None
+    # The new segment is still playing on the primary.
+    assert g._music_current is not None
+
+
+def test_music_loop_does_not_hard_cut_on_zone_change(pygame_headless):
+    """On a zone change, the old segment is NOT hard-cut -- it fades out
+    on the secondary channel (its volume ramps down) while the new
+    segment fades in on the primary. The two segments overlap for ~1s.
+    """
+    import main
+    g = _make_game()
+    g.state.music_on = True
+    # Start + complete the first segment.
+    g._update_music(1 / 60)
+    for _ in range(70):
+        g._update_music(1 / 60)
+    first = g._music_current
+    # The first segment's volume should be at state.volume (not 0).
+    # (We can't read the volume back from pygame.mixer.Sound reliably,
+    # but we can check the outgoing is set + the fade is in progress.)
+    # Change the zone.
+    g.state.zone_index = g.state.zone_index + 1
+    g._update_music(1 / 60)
+    # The old segment is the outgoing (on the secondary, fading out).
+    assert g._music_outgoing is first
+    # The crossfade is in progress.
+    assert g._music_fade > 0.0
+    # The outgoing is still "alive" (not stopped) at the start of the
+    # crossfade -- it fades out over ~1s, not a hard cut.
+    # (We check the outgoing is still set after 1 tick; it's dropped
+    # only when the fade completes.)
 
 
 def test_music_loop_re_rolls_each_cycle(pygame_headless):

@@ -95,22 +95,37 @@ class Game:
         # segment ends (or the zone changes), it generates the next
         # segment (re-rolled) at the new root_hz and crossfades. The
         # output is scaled by ``state.volume``. The loop is non-blocking:
-        # a reserved mixer channel + ``get_busy()`` checks each frame;
-        # the crossfade is a 1s volume ramp-in on the new segment (no
-        # jarring key change -- the new segment fades in gently).
-        self._music_channel = None
-        self._music_current = None        # the currently-playing Sound
+        # two reserved mixer channels (the primary for the current
+        # segment, the secondary for the outgoing segment during a
+        # crossfade) + ``get_busy()`` checks each frame. The crossfade is
+        # a true overlap: on a zone change, the old segment fades out on
+        # the secondary channel while the new segment fades in on the
+        # primary (no hard cut, no sudden silence -- the two segments
+        # overlap for ~1s).
+        self._music_channel = None        # primary (the current/new segment)
+        self._music_channel_b = None     # secondary (the outgoing segment during a crossfade)
+        self._music_current = None        # the currently-playing Sound (on the primary)
+        self._music_outgoing = None       # the outgoing Sound (on the secondary, fading out)
         self._music_zone_index = -1       # the zone the current segment is for
         self._music_cycle_seed = 0        # per-cycle seed (re-rolled each cycle)
-        self._music_fade = 0.0           # fade-in timer (0 = not fading)
+        self._music_fade = 0.0           # crossfade timer (0 = not fading; >0 = fading)
+        # ``_music_fade_dir``: +1 = fading in a new segment (the primary
+        # ramps up); -1 = crossfading (the primary ramps up, the outgoing
+        # on the secondary ramps down). 0 = not fading.
+        self._music_fade_dir = 0
         try:
             if pygame.mixer.get_init():
-                # Reserve a channel for the music (channel 0). The SFX
-                # use the default pool (channels 1..7); the music is on
-                # its own channel so it doesn't cut SFX and vice versa.
+                # Reserve two channels for the music (channels 0 + 1).
+                # The SFX use the default pool (channels 2..7); the music
+                # is on its own channels so it doesn't cut SFX and vice
+                # versa. Channel 0 is the primary (the current segment);
+                # channel 1 is the secondary (the outgoing segment during
+                # a crossfade).
                 self._music_channel = pygame.mixer.Channel(0)
+                self._music_channel_b = pygame.mixer.Channel(1)
         except Exception:
             self._music_channel = None
+            self._music_channel_b = None
 
         self.screens = {
             "menu": MenuScreen(self),
@@ -272,9 +287,18 @@ class Game:
         Plays the current zone's ambient segment (a 4-bar generative
         drone + koto + taiko keyed to the zone hue); when the segment
         ends (or the zone changes), generates the next segment (re-rolled)
-        and fades it in. Gated on ``state.music_on``; scaled by
-        ``state.volume``. Non-blocking (a reserved channel + get_busy()
-        checks). Degrades gracefully (no crash if the mixer is gone).
+        and crossfades. Gated on ``state.music_on``; scaled by
+        ``state.volume``. Non-blocking (two reserved channels +
+        ``get_busy()`` checks). Degrades gracefully (no crash if the
+        mixer is gone).
+
+        Crossfade: on a zone change, the old segment is NOT hard-cut.
+        It moves to the secondary channel (channel 1) and fades out over
+        ~1s, while the new segment fades in on the primary (channel 0).
+        The two segments overlap for ~1s (a true crossfade, no sudden
+        silence, no jarring key change). On a segment end (the old
+        segment ended naturally), the new segment fades in on the primary
+        (no outgoing to fade out -- the old already ended).
         """
         try:
             # Gate: music_on is SEPARATE from sound_on. If music is off,
@@ -285,34 +309,56 @@ class Game:
             ch = self._music_channel
             if ch is None:
                 return  # no mixer; nothing to play
-            # Fade-in in progress: ramp the new segment's volume up over
-            # ~1s (a gentle fade-in so the new segment doesn't pop in --
-            # no jarring key change). The previous segment has already
-            # ended (or was stopped) so there's no overlap to manage.
+            # Crossfade in progress: ramp the primary (new) up + the
+            # secondary (outgoing) down over ~1s. The two segments overlap
+            # (a true crossfade -- no hard cut, no sudden silence).
             if self._music_fade > 0:
                 self._music_fade -= dt
-                # Ramp the new segment's volume from 0 to state.volume.
+                # t goes 0 -> 1 over the fade (the new ramps up, the old
+                # ramps down).
                 t = 1.0 - max(0.0, self._music_fade / 1.0)
                 if self._music_current is not None:
                     try: self._music_current.set_volume(self.state.volume * t)
                     except Exception: pass
+                if self._music_fade_dir < 0 and self._music_outgoing is not None:
+                    # Crossfade: the outgoing ramps down.
+                    try: self._music_outgoing.set_volume(self.state.volume * (1 - t))
+                    except Exception: pass
                 if self._music_fade <= 0:
                     self._music_fade = 0.0
+                    self._music_fade_dir = 0
+                    # Crossfade done: stop + drop the outgoing.
+                    if self._music_outgoing is not None:
+                        try: self._music_outgoing.stop()
+                        except Exception: pass
+                        self._music_outgoing = None
+                        if self._music_channel_b is not None:
+                            try: self._music_channel_b.stop()
+                            except Exception: pass
                 return
             # Not fading: keep the current segment's volume scaled by
             # state.volume (so the slider takes effect live).
             if self._music_current is not None:
                 try: self._music_current.set_volume(self.state.volume)
                 except Exception: pass
-            # Did the zone change? If so, start a fade-in of a new
-            # segment at the new root_hz (no jarring key change -- the
-            # new segment fades in gently from 0).
+            # Did the zone change? If so, start a crossfade to a new
+            # segment at the new root_hz (the old segment moves to the
+            # secondary + fades out; the new fades in on the primary; no
+            # hard cut, no sudden silence). If there's no current segment
+            # yet (the first segment), just fade in.
             if self.state.zone_index != self._music_zone_index:
-                self._start_music_segment(fade=True)
+                if self._music_current is None:
+                    self._start_music_segment(fade=True)
+                else:
+                    self._start_music_segment(crossfade=True)
                 return
             # Is the current segment done? If so, re-roll the next cycle
-            # (a new segment at the same root_hz, re-seeded, faded in).
-            if not ch.get_busy():
+            # (a new segment at the same root_hz, re-seeded, faded in --
+            # the old ended naturally so no outgoing to crossfade). Only
+            # do this if we're not in the middle of a fade-in (the
+            # primary may report not-busy during the fade-in if the
+            # segment is very short; the fade-in completes first).
+            if not ch.get_busy() and self._music_fade <= 0:
                 self._start_music_segment(fade=True)
         except Exception:
             # Degrade gracefully: never crash the game over music.
@@ -324,24 +370,34 @@ class Game:
             ch = self._music_channel
             if ch is not None:
                 ch.stop()
+            if self._music_channel_b is not None:
+                self._music_channel_b.stop()
             if self._music_current is not None:
                 try: self._music_current.stop()
+                except Exception: pass
+            if self._music_outgoing is not None:
+                try: self._music_outgoing.stop()
                 except Exception: pass
         except Exception:
             pass
         self._music_current = None
+        self._music_outgoing = None
         self._music_fade = 0.0
+        self._music_fade_dir = 0
         self._music_zone_index = -1
 
-    def _start_music_segment(self, *, fade: bool = False):
+    def _start_music_segment(self, *, fade: bool = False, crossfade: bool = False):
         """Generate + play a new segment at the current zone's root_hz.
 
         Generates a new segment (re-rolled with a fresh seed) at the
         current zone's root_hz (mapped from the zone hue) and plays it
-        on the music channel. If ``fade``, the segment fades in over
-        ~1s (a gentle fade-in so the new segment doesn't pop in -- no
-        jarring key change on zone transitions). Degrades gracefully if
-        the mixer is unavailable or the segment fails to generate.
+        on the primary music channel. If ``fade``, the segment fades in
+        over ~1s (the old segment ended naturally; no outgoing to fade
+        out). If ``crossfade``, the old segment moves to the secondary
+        channel and fades out while the new segment fades in on the
+        primary (a true overlap crossfade -- no hard cut, no sudden
+        silence, no jarring key change). Degrades gracefully if the
+        mixer is unavailable or the segment fails to generate.
         """
         from data.enemies import zone_by_index
         try:
@@ -358,13 +414,31 @@ class Game:
         if ch is None:
             return
         try:
-            if fade:
-                # Start at volume 0 and ramp up over ~1s.
+            if crossfade:
+                # Move the current segment to the secondary channel +
+                # fade it out while the new segment fades in on the
+                # primary. The two segments overlap for ~1s (a true
+                # crossfade -- no hard cut, no sudden silence).
+                if self._music_current is not None and self._music_channel_b is not None:
+                    # The outgoing keeps its current volume (it'll ramp
+                    # down during the fade). Move it to the secondary.
+                    self._music_outgoing = self._music_current
+                    try: self._music_channel_b.play(self._music_outgoing)
+                    except Exception: pass
+                # The new segment starts at volume 0 and ramps up.
                 snd.set_volume(0.0)
                 self._music_fade = 1.0
+                self._music_fade_dir = -1  # crossfade (outgoing ramps down)
+            elif fade:
+                # Fade-in only (the old segment ended naturally; no
+                # outgoing to crossfade). Start at volume 0 + ramp up.
+                snd.set_volume(0.0)
+                self._music_fade = 1.0
+                self._music_fade_dir = 1   # fade-in (no outgoing)
             else:
                 snd.set_volume(self.state.volume)
                 self._music_fade = 0.0
+                self._music_fade_dir = 0
             ch.play(snd)
             self._music_current = snd
             self._music_zone_index = self.state.zone_index

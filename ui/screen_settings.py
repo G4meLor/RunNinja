@@ -43,7 +43,8 @@ class SettingsScreen:
         self.btn_quality = Button((cfg.WINDOW_W // 2 - 160, 430, 320, 48), "",
                                   on_click=self._toggle_quality)
         self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 540, 320, 48),
-                                "Reset all progress", on_click=self._reset, color=(160, 50, 60))
+                                "Reset all progress", on_click=self._reset, color=(160, 50, 60),
+                                sound="ui_confirm")
         self.buttons = [self.btn_back, self.btn_sound, self.btn_music,
                         self.btn_motion, self.btn_quality, self.btn_reset]
         # Task 37 (pl-music-sfx): a volume slider for ``state.volume``
@@ -119,6 +120,12 @@ class SettingsScreen:
             self.reset_confirm = 3.0
 
     def handle(self, event):
+        # Task 37 (pl-music-sfx): pass ``state.sound_on`` to each button
+        # so the UI click sound is gated on the SFX toggle (the sound is
+        # a layered SFX, ``ui_click``/``ui_confirm``, not a pure sine).
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         # Task 37 (pl-music-sfx): the volume slider. Handle mouse events

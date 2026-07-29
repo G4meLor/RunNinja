@@ -14,10 +14,20 @@ from utils import clamp
 # ---------------------------------------------------------------------------
 # Button
 # ---------------------------------------------------------------------------
+# Task 37 (pl-music-sfx): buttons play a UI click sound on click. The
+# sound is gated on the ``sound_on`` flag the owning screen passes (the
+# screen reads ``state.sound_on`` and passes it here). The click sound is
+# a layered SFX (``ui_click`` -- a short tone + a small noise burst), not
+# a pure sine beep. The ``sound`` parameter selects which SFX to play
+# (default ``"ui_click"``; a confirm button can pass ``"ui_confirm"``).
+# ``sound_on`` defaults to False so a Button constructed without a
+# ``sound_on`` argument is silent (no crash if the screen forgot to pass
+# it -- the sound is opt-in per screen).
 class Button:
     def __init__(self, rect: pygame.Rect, label: str, *,
                  on_click=None, font=None, enabled: bool = True,
-                 color=None, text_color=None, hint: str = ""):
+                 color=None, text_color=None, hint: str = "",
+                 sound: str = "ui_click", sound_on: bool = False):
         self.rect = pygame.Rect(rect)
         self.label = label
         self.on_click = on_click
@@ -26,6 +36,14 @@ class Button:
         self.color = color or C.btn
         self.text_color = text_color or C.btn_text
         self.hint = hint
+        # Task 37: the UI click sound + the sound_on gate. ``sound`` is the
+        # SFX name to play on click (default ``"ui_click"``); ``sound_on``
+        # is the gate (the screen passes ``state.sound_on``). A Button
+        # constructed without ``sound_on`` is silent (the default is False
+        # so a screen that forgets to pass it doesn't crash -- the sound is
+        # opt-in).
+        self.sound = sound
+        self.sound_on = sound_on
         self.hover = False
         self.pressed = False
         self.hover_t = 0.0
@@ -41,6 +59,10 @@ class Button:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             if self.pressed and self.rect.collidepoint(event.pos):
                 self.pressed = False
+                # Task 37: play the UI click sound (gated on ``sound_on``).
+                if self.sound and self.sound_on:
+                    from assets import play
+                    play(self.sound, self.sound_on)
                 if self.on_click:
                     self.on_click()
                 return True

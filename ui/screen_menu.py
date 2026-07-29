@@ -27,6 +27,11 @@ class MenuScreen:
         self.game.set_screen("game")
 
     def handle(self, event):
+        # Task 37 (pl-music-sfx): pass ``state.sound_on`` to each button
+        # so the UI click sound is gated on the SFX toggle.
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
 
