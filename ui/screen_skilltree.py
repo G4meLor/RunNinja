@@ -6,6 +6,10 @@ spent on the tree + a clear, so the player can re-spend on a different
 build. The button is visible when the player has at least 1 unlocked
 node (no respec if the tree is empty); on click, it refunds the total
 cost of unlocked nodes, saves, and refreshes the screen.
+
+Task 36 (pl-hints-nav-tooltips): a TooltipManager with callable-text
+(live values from state) for every skill-tree node. The tooltip shows
+the node's name, description, cost, branch, effect, and unlock status.
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel
 from ui.widgets import Button, currency_pill
+from ui.tooltip import TooltipManager
 from utils import format_number
 from data import skill_tree as st
 from core import skill_unlock
@@ -38,6 +43,9 @@ class SkillTreeScreen:
         self.buttons = [self.btn_back, self.btn_respec]
         self.hover_node = None
         self.node_rects: dict[str, pygame.Rect] = {}
+        # Task 36: a TooltipManager with callable-text (live values from
+        # state) for every skill-tree node.
+        self.tooltips = TooltipManager()
 
     def _do_respec(self) -> None:
         """Refund all elixir spent on the skill tree + clear it.
@@ -162,3 +170,36 @@ class SkillTreeScreen:
             draw_text(surf, f"Branch: {node.branch}", (tr.x + 10, tr.y + 70), font_xs(), C.text_muted)
         for b in self.buttons:
             b.draw(surf)
+        # Task 36: register a tooltip per skill-tree node with live values
+        # (the node's effect, cost, unlock status — a callable-text form so
+        # the tooltip reflects the current state when hovered).
+        self.tooltips.clear()
+        for nid, r in self.node_rects.items():
+            tip = self._node_tooltip(nid)
+            self.tooltips.register(f"node:{nid}", r, tip)
+        self.tooltips.update(pygame.mouse.get_pos())
+        self.tooltips.draw(surf)
+
+    def _node_tooltip(self, nid: str):
+        """A callable tooltip for a skill-tree node (live values)."""
+        def _text():
+            state = self.game.state
+            node = st.BY_ID.get(nid)
+            if node is None:
+                return ""
+            unlocked = nid in state.skill_tree
+            can = skill_unlock.can_unlock(state, nid)
+            if unlocked:
+                status = "Unlocked"
+            elif can:
+                status = "Can unlock"
+            else:
+                prereq = node.prereq
+                if prereq and prereq not in state.skill_tree:
+                    status = f"Requires {st.BY_ID[prereq].name}"
+                else:
+                    status = f"Need {node.cost} elixir"
+            return (f"{node.name}\n{node.desc}\n"
+                    f"Cost: {node.cost} elixir\n"
+                    f"Branch: {node.branch}\n{status}")
+        return _text

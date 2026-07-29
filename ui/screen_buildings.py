@@ -6,6 +6,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button, currency_pill, ScrollList
+from ui.tooltip import TooltipManager
 from utils import format_number
 from data import buildings as bd
 from core import game_economy
@@ -20,6 +21,9 @@ class BuildingsScreen:
         self.list = None
         self._build_list()
         self.buy_buttons: list[Button] = []
+        # Task 36 (pl-hints-nav-tooltips): a TooltipManager with
+        # callable-text (live values from state) for every building.
+        self.tooltips = TooltipManager()
 
     def _build_list(self) -> None:
         state = self.game.state
@@ -121,3 +125,36 @@ class BuildingsScreen:
             draw_text(surf, f"Unlock: zone {b.unlock_zone + 1}", (r.x + 16, r.y + 136), font_xs(), C.text_dim)
         for b in self.buttons + self.buy_buttons:
             b.draw(surf)
+        # Task 36: register a tooltip per building row with live values
+        # (the current level, gps, cost, unlock status — a callable-text
+        # form so the tooltip reflects the current state when hovered).
+        # The ScrollList's items are at fixed positions; we register a
+        # tooltip for each building's row rect (including off-screen rows
+        # so the count matches the building roster).
+        self.tooltips.clear()
+        if self.list is not None:
+            y0 = self.list.rect.y - int(self.list.scroll)
+            for i, b in enumerate(bd.BUILDINGS):
+                row_rect = pygame.Rect(self.list.rect.x,
+                                       y0 + i * self.list.item_h,
+                                       self.list.rect.w, self.list.item_h)
+                tip = self._building_tooltip(b.id)
+                self.tooltips.register(f"building:{b.id}", row_rect, tip)
+        self.tooltips.update(pygame.mouse.get_pos())
+        self.tooltips.draw(surf)
+
+    def _building_tooltip(self, bid: str):
+        """A callable tooltip for a building (live values from state)."""
+        def _text():
+            state = self.game.state
+            b = bd.BY_ID[bid]
+            lvl = state.building_level(bid)
+            gps = game_economy.building_gps(state, bid)
+            cost = game_economy.building_cost(state, bid)
+            unlocked = state.zone_index >= b.unlock_zone
+            status = ("Unlocked" if unlocked
+                      else f"Unlocks at zone {b.unlock_zone + 1}")
+            return (f"{b.name}\nLevel: {lvl}\n"
+                    f"Gold/sec: {format_number(gps)}\n"
+                    f"Next cost: {format_number(cost)} g\n{status}")
+        return _text

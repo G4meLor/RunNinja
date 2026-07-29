@@ -11,6 +11,126 @@ from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_bar, draw_panel
 from ui.widgets import Button, currency_pill
 from utils import format_number, clamp
+from core.hints import HintEngine
+
+
+# ---------------------------------------------------------------------------
+# Task 36 (pl-hints-nav-tooltips): NavItem — categorized icon-rail item
+# ---------------------------------------------------------------------------
+# A compact nav button with an icon (10x10 colored rounded rect) + a short
+# label (font_xs). Replaces the 12 flat 64px text buttons with a categorized
+# icon rail (4 groups: Play / Manage / Collect / Meta). The stagger animation
+# (entrance fade-in) is gated by ``reduced_motion``: when on, the item
+# appears immediately (stagger_t = 1.0); otherwise the item fades in over
+# 0.15s with a per-index delay (idx * 0.03s).
+class NavItem:
+    """A categorized nav-rail item: icon + label, with stagger animation."""
+
+    __slots__ = ("rect", "screen_id", "label", "icon_color", "on_click",
+                 "stagger_idx", "hover", "pressed", "hover_t", "stagger_t")
+
+    def __init__(self, rect, screen_id, label, icon_color, on_click,
+                 stagger_idx: int = 0) -> None:
+        self.rect = pygame.Rect(rect)
+        self.screen_id = screen_id
+        self.label = label
+        self.icon_color = icon_color
+        self.on_click = on_click
+        self.stagger_idx = stagger_idx
+        self.hover = False
+        self.pressed = False
+        self.hover_t = 0.0
+        self.stagger_t = 0.0       # entrance animation progress (0..1)
+
+    def handle(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self.rect.collidepoint(event.pos)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.pressed = True
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.pressed and self.rect.collidepoint(event.pos):
+                self.pressed = False
+                if self.on_click:
+                    self.on_click()
+                return True
+            self.pressed = False
+        return False
+
+    def update(self, dt: float, stagger_elapsed: float,
+               reduced_motion: bool) -> None:
+        """Ease the hover state + advance the stagger entrance animation.
+
+        ``stagger_elapsed`` is the time since the nav rail started; each
+        item has a per-index delay (``idx * 0.03s``) and fades in over
+        0.15s. Under ``reduced_motion`` the item appears instantly
+        (``stagger_t = 1.0``).
+        """
+        target = 1.0 if self.hover else 0.0
+        self.hover_t += (target - self.hover_t) * min(1.0, dt * 12)
+        if reduced_motion:
+            self.stagger_t = 1.0
+        else:
+            delay = self.stagger_idx * 0.03
+            self.stagger_t = clamp((stagger_elapsed - delay) / 0.15, 0.0, 1.0)
+
+    def draw(self, surf: pygame.Surface) -> None:
+        if self.stagger_t <= 0:
+            return
+        t = self.stagger_t
+        # Stagger: slide in from above + alpha fade-in.
+        y_offset = int((1.0 - t) * -8)
+        alpha = int(255 * t)
+        rect = self.rect.copy()
+        rect.y += y_offset
+        if self.pressed:
+            col = C.btn_press
+            rect.y += 1
+        else:
+            col = Button._lerp(C.btn, C.btn_hover, self.hover_t)
+        border = C.panel_border_hi if self.hover else C.panel_border
+        if alpha >= 255:
+            pygame.draw.rect(surf, col, rect, border_radius=4)
+            pygame.draw.rect(surf, border, rect, 1, border_radius=4)
+            # Icon (10x10 colored rounded rect).
+            icon_rect = pygame.Rect(rect.x + 5, rect.y + 10, 10, 10)
+            pygame.draw.rect(surf, self.icon_color, icon_rect, border_radius=2)
+            # Label (font_xs, to the right of the icon).
+            label_surf = font_xs(bold=True).render(self.label, True, C.text)
+            surf.blit(label_surf, (rect.x + 18, rect.y + 9))
+        else:
+            # Draw with alpha on a temp SRCALPHA surface (stagger fade-in).
+            temp = pygame.Surface(rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(temp, (*col, alpha), temp.get_rect(),
+                             border_radius=4)
+            pygame.draw.rect(temp, (*border, alpha), temp.get_rect(), 1,
+                             border_radius=4)
+            pygame.draw.rect(temp, (*self.icon_color, alpha),
+                             (5, 10, 10, 10), border_radius=2)
+            label_surf = font_xs(bold=True).render(self.label, True, C.text)
+            label_surf.set_alpha(alpha)
+            temp.blit(label_surf, (18, 9))
+            surf.blit(temp, rect.topleft)
+
+
+# The 12 nav items grouped into 4 categories (Play / Manage / Collect / Meta).
+# Each tuple: (screen_id, label, icon_color, category).
+_NAV_DEFS = [
+    ("ascend", "Ascend", (150, 80, 220), "Play"),
+    ("buildings", "Build", (120, 220, 200), "Manage"),
+    ("upgrades", "Upgr", (255, 205, 90), "Manage"),
+    ("skilltree", "Skill", (180, 130, 255), "Manage"),
+    ("pets", "Pets", (255, 160, 200), "Manage"),
+    ("quests", "Quest", (255, 240, 120), "Collect"),
+    ("records", "Recrd", (130, 200, 255), "Collect"),
+    ("bestiary", "Besti", (255, 120, 110), "Collect"),
+    ("cosmetics", "Cosm", (200, 160, 255), "Collect"),
+    ("godai", "Godai", (255, 90, 160), "Collect"),
+    ("hero", "Hero", (255, 180, 90), "Collect"),
+    ("settings", "Set", (160, 170, 200), "Meta"),
+]
+# The category order (left-to-right in the rail).
+_CATEGORIES = ["Play", "Manage", "Collect", "Meta"]
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +250,28 @@ class GameScreen:
             (cfg.WINDOW_W - 180, cfg.WINDOW_H - 60, 160, 44),
             "Auto Katana", on_click=self._toggle_energy,
         )
-        # Nav buttons.
-        self.nav_buttons: list[Button] = []
+        # Task 36 (pl-hints-nav-tooltips): the categorized icon rail
+        # replaces the 12 flat 64px text buttons. Each NavItem has an
+        # icon + a short label; the 12 items are grouped into 4
+        # categories (Play / Manage / Collect / Meta) with dividers.
+        # ``_nav_by_screen`` maps screen_id -> NavItem for the hint glow.
+        self.nav_items: list[NavItem] = []
+        self._nav_by_screen: dict[str, NavItem] = {}
+        self._nav_dividers: list[tuple[int, int]] = []  # (x, height) divider lines
         self._build_nav()
+        # The hint engine + the current hint (evaluated per frame in
+        # update). The gate (not welcome_pending and not zone_fx.active)
+        # is applied in next_hint. The seen-set (state.seen_hints)
+        # prevents repeats; the UI appends on dismissal.
+        self.hint_engine = HintEngine()
+        self._current_hint = None
+        # The nav stagger entrance animation: a per-item delay (idx *
+        # 0.03s) + a 0.15s fade-in, gated by reduced_motion (instant
+        # when on). ``_nav_stagger_elapsed`` starts at 0 and increases
+        # each frame; the stagger plays once on construction.
+        self._nav_stagger_elapsed = 0.0
+        # The hint glow pulse timer (for the pulsing border alpha).
+        self._hint_glow_t = 0.0
         # Task 34 (cnt-shadow-dungeon-variants): Shadow Dungeon entry +
         # variant selector. A button on the game screen opens the dungeon
         # variant selector (Story/Endless/Daily). The selector is a small
@@ -187,27 +326,73 @@ class GameScreen:
         self._prev_gold: float = 0.0
 
     def _build_nav(self) -> None:
+        """Build the categorized icon rail (12 NavItems in 4 categories).
+
+        The rail is a single row at y=8, right-aligned (rightmost button's
+        right edge at WINDOW_W - 8). Each button is 60x30 with a 4px gap
+        within a category and a 6px gap (with a 2px vertical divider line)
+        between categories. The items are laid out left-to-right within
+        each category (Play → Manage → Collect → Meta).
+        """
         y = 8
-        x = cfg.WINDOW_W - 8
-        labels = [
-            ("Cosmetics", lambda: self.game.set_screen("cosmetics")),
-            ("Bestiary", lambda: self.game.set_screen("bestiary")),
-            ("Godai", lambda: self.game.set_screen("godai")),
-            ("Hero", lambda: self.game.set_screen("hero")),
-            ("Records", lambda: self.game.set_screen("records")),
-            ("Settings", lambda: self.game.set_screen("settings")),
-            ("Quests", lambda: self.game.set_screen("quests")),
-            ("Pets", lambda: self.game.set_screen("pets")),
-            ("Skills", lambda: self.game.set_screen("skilltree")),
-            ("Upgrades", lambda: self.game.set_screen("upgrades")),
-            ("Buildings", lambda: self.game.set_screen("buildings")),
-            ("Ascend", lambda: self.game.set_screen("ascend")),
-        ]
-        for label, cb in reversed(labels):
-            w = 64
-            x -= w + 4
-            btn = Button((x, y, w, 32), label, on_click=cb)
-            self.nav_buttons.insert(0, btn)
+        w = 60
+        h = 30
+        gap_in = 4       # gap within a category
+        gap_out = 6      # gap between categories (divider sits in here)
+        # Group the nav defs by category (in category order).
+        by_cat: dict[str, list] = {}
+        for screen_id, label, icon_color, cat in _NAV_DEFS:
+            by_cat.setdefault(cat, []).append((screen_id, label, icon_color))
+        # Compute the total rail width so we can right-align the start.
+        total_w = 0
+        for ci, cat in enumerate(_CATEGORIES):
+            items = by_cat.get(cat, [])
+            n = len(items)
+            if n == 0:
+                continue
+            total_w += n * w + (n - 1) * gap_in
+            if ci > 0:
+                total_w += gap_out
+        x = cfg.WINDOW_W - 8 - total_w
+        # Lay out left-to-right (Play → Manage → Collect → Meta).
+        self.nav_items = []
+        self._nav_by_screen = {}
+        self._nav_dividers = []
+        stagger_idx = 0
+        for ci, cat in enumerate(_CATEGORIES):
+            items = by_cat.get(cat, [])
+            if not items:
+                continue
+            if ci > 0:
+                # Divider: 2px vertical line centered in the 6px gap.
+                divider_x = x - gap_out // 2 - 1
+                self._nav_dividers.append((divider_x, h))
+                x += gap_out
+            for i, (screen_id, label, icon_color) in enumerate(items):
+                if i > 0:
+                    x += gap_in
+                cb = (lambda sid=screen_id: self._nav_click(sid))
+                item = NavItem((x, y, w, h), screen_id, label, icon_color,
+                               cb, stagger_idx=stagger_idx)
+                self.nav_items.append(item)
+                self._nav_by_screen[screen_id] = item
+                stagger_idx += 1
+                x += w
+
+    def _nav_click(self, screen_id: str) -> None:
+        """Handle a nav-item click: switch screen + dismiss the hint.
+
+        If the current hint's target is ``nav:<screen_id>``, the hint is
+        dismissed (its action_id is appended to ``state.seen_hints``) so
+        it doesn't repeat.
+        """
+        self.game.set_screen(screen_id)
+        # Dismiss the hint if this nav item is the hint target.
+        if self._current_hint is not None:
+            target = getattr(self._current_hint, "target", "")
+            if target == f"nav:{screen_id}":
+                if self._current_hint.action_id not in self.game.state.seen_hints:
+                    self.game.state.seen_hints.append(self._current_hint.action_id)
 
     # -----------------------------------------------------------------
     # Task 34 (cnt-shadow-dungeon-variants): dungeon entry + variant
@@ -408,15 +593,37 @@ class GameScreen:
             self.game.runner.tap_at(event.pos[0], event.pos[1])
             from assets import play
             play("tap", self.game.state.sound_on)
-        for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
+            # Task 36: dismiss the "tap_road" hint when the player taps
+            # the road (the player followed the action).
+            if self._current_hint is not None:
+                if getattr(self._current_hint, "target", "") == "road":
+                    if self._current_hint.action_id not in self.game.state.seen_hints:
+                        self.game.state.seen_hints.append(
+                            self._current_hint.action_id)
+        for b in self.nav_items + self.skill_buttons + self.finisher_buttons:
             b.handle(event)
         self.btn_energy.handle(event)
         # Task 34: the dungeon entry button (opens the variant selector).
         self.btn_dungeon.handle(event)
 
     def update(self, dt: float) -> None:
-        for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
+        for b in self.skill_buttons + self.finisher_buttons:
             b.update(dt)
+        # Task 36: update the nav items (stagger + hover) separately
+        # because NavItem.update takes the stagger + reduced_motion args.
+        state = self.game.state
+        self._nav_stagger_elapsed += dt
+        for nav in self.nav_items:
+            nav.update(dt, self._nav_stagger_elapsed, state.reduced_motion)
+        # Evaluate the hint engine (gated on not welcome_pending and not
+        # zone_fx.active). The seen-set (state.seen_hints) prevents
+        # repeats; the UI dismisses on click.
+        self._current_hint = self.hint_engine.next_hint(
+            state,
+            welcome_pending=self.welcome_pending is not None,
+            zone_fx_active=self.game.runner.zone_fx.active)
+        # Advance the hint glow pulse timer.
+        self._hint_glow_t += dt
         self.btn_energy.update(dt)
         # Task 34: update the dungeon entry button + the variant selector.
         # The dungeon button is enabled only when the player meets the
@@ -915,9 +1122,23 @@ class GameScreen:
                     b.enabled = False
             b.draw(surf)
 
-        # Nav buttons.
-        for b in self.nav_buttons:
-            b.draw(surf)
+        # Task 36: the categorized icon rail (NavItems + category
+        # dividers). The dividers are thin vertical lines between category
+        # groups (2px wide, full button height).
+        for dx, dh in self._nav_dividers:
+            pygame.draw.rect(surf, C.panel_border,
+                             (dx, 8, 2, dh))
+        for nav in self.nav_items:
+            nav.draw(surf)
+        # Task 36: the hint glow — a pulsing border on the next best
+        # action. The HintEngine returns a Hint with a ``target`` key;
+        # "road" glows the road area, "nav:<screen_id>" glows the nav
+        # button. The glow is a pulsing border (alpha oscillates with
+        # sin(t)). Gated by reduced_motion (the glow is a visual flourish;
+        # the hint text is the non-visual cue for reduced_motion players).
+        if (self._current_hint is not None
+                and not state.reduced_motion):
+            self._draw_hint_glow(surf, self._current_hint)
 
         # Task 34 (cnt-shadow-dungeon-variants): the dungeon entry button
         # + the dungeon HUD (the active dungeon's floor + variant). The
@@ -1197,3 +1418,79 @@ class GameScreen:
             img.set_alpha(int(255 * alpha))
             r = img.get_rect(midbottom=((x0 + x1) // 2, y - 2))
             surf.blit(img, r)
+
+    # -----------------------------------------------------------------
+    # Task 36 (pl-hints-nav-tooltips): hint glow
+    # -----------------------------------------------------------------
+    def _draw_hint_glow(self, surf: pygame.Surface, hint) -> None:
+        """Draw a pulsing glow on the hint's target.
+
+        The glow is a pulsing border (alpha oscillates with
+        ``sin(self._hint_glow_t * 4)``) around the target rect. For
+        ``target == "road"``, the glow is around the road area + a
+        downward-pointing arrow above the road. For ``target ==
+        "nav:<screen_id>"``, the glow is around the NavItem's rect.
+        The hint text is drawn below the glow so the player can read the
+        prompt.
+        """
+        target = getattr(hint, "target", "")
+        pulse = 0.5 + 0.5 * math.sin(self._hint_glow_t * 4)
+        alpha = int(120 + 100 * pulse)
+        if target == "road":
+            # Glow the road area (a pulsing border around the road).
+            road_rect = pygame.Rect(0, cfg.ROAD_TOP,
+                                    cfg.WINDOW_W, cfg.ROAD_H)
+            glow_rect = road_rect.inflate(4, 4)
+            glow_surf = pygame.Surface(glow_rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(glow_surf, (255, 220, 120, alpha),
+                             glow_surf.get_rect(), 3, border_radius=8)
+            surf.blit(glow_surf, glow_rect.topleft)
+            # Downward-pointing arrow above the road center.
+            cx = cfg.WINDOW_W // 2
+            ay = cfg.ROAD_TOP - 20 + int(4 * pulse)
+            arrow = pygame.Surface((24, 16), pygame.SRCALPHA)
+            pygame.draw.polygon(arrow, (255, 220, 120, alpha),
+                                [(12, 16), (4, 0), (20, 0)])
+            surf.blit(arrow, (cx - 12, ay))
+        elif target.startswith("nav:"):
+            screen_id = target.split(":", 1)[1]
+            item = self._nav_by_screen.get(screen_id)
+            if item is None:
+                return
+            r = item.rect.inflate(6, 6)
+            glow_surf = pygame.Surface(r.size, pygame.SRCALPHA)
+            pygame.draw.rect(glow_surf, (255, 220, 120, alpha),
+                             glow_surf.get_rect(), 3, border_radius=8)
+            surf.blit(glow_surf, r.topleft)
+        else:
+            return
+        # Hint text below the glow target (the prompt the player reads).
+        text = getattr(hint, "text", "")
+        if text:
+            if target == "road":
+                tx = cfg.WINDOW_W // 2
+                ty = cfg.ROAD_TOP + 40
+            else:
+                tx = item.rect.centerx
+                ty = item.rect.bottom + 16
+            img = font_sm(bold=True).render(text, True, (255, 220, 120))
+            img.set_alpha(alpha)
+            r = img.get_rect(midtop=(tx, ty))
+            # Clamp to the screen.
+            if r.right > cfg.WINDOW_W - 4:
+                r.x = cfg.WINDOW_W - r.w - 4
+            if r.left < 4:
+                r.x = 4
+            if r.bottom > cfg.WINDOW_H - 4:
+                r.y = item.rect.top - r.h - 8 if target.startswith("nav:") \
+                    else r.y
+            # A small bg panel behind the text for readability.
+            bg = r.inflate(12, 6)
+            bg_surf = pygame.Surface(bg.size, pygame.SRCALPHA)
+            pygame.draw.rect(bg_surf, (20, 22, 40, min(220, alpha)),
+                             bg_surf.get_rect(), border_radius=6)
+            pygame.draw.rect(bg_surf, (255, 220, 120, min(180, alpha)),
+                             bg_surf.get_rect(), 1, border_radius=6)
+            surf.blit(bg_surf, bg.topleft)
+            surf.blit(img, r)
+

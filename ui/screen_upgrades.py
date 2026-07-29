@@ -6,6 +6,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel
 from ui.widgets import Button, currency_pill
+from ui.tooltip import TooltipManager
 from utils import format_number
 from core import game_economy
 
@@ -18,6 +19,9 @@ class UpgradesScreen:
         self.buttons = [self.btn_back]
         self.upgrade_buttons: list[Button] = []
         self._build_buttons()
+        # Task 36 (pl-hints-nav-tooltips): a TooltipManager with
+        # callable-text (live values from state) for every upgrade.
+        self.tooltips = TooltipManager()
 
     def _build_buttons(self) -> None:
         self.upgrade_buttons = []
@@ -65,3 +69,35 @@ class UpgradesScreen:
         currency_pill(surf, x, y, "Gold", format_number(state.gold), C.gold)
         for b in self.buttons + self.upgrade_buttons:
             b.draw(surf)
+        # Task 36: register a tooltip per upgrade button with live values
+        # (the current level, cost, and effect — a callable-text form so
+        # the tooltip reflects the current state when hovered).
+        self.tooltips.clear()
+        for btn, (key, label, *_) in zip(self.upgrade_buttons,
+                                         cfg.TAP_UPGRADE_DEFS):
+            tip = self._upgrade_tooltip(key, label)
+            self.tooltips.register(f"upgrade:{key}", btn.rect, tip)
+        self.tooltips.update(pygame.mouse.get_pos())
+        self.tooltips.draw(surf)
+
+    def _upgrade_tooltip(self, key: str, label: str):
+        """A callable tooltip for an upgrade (live values from state).
+
+        Returns a zero-arg callable that reads the current level, cost,
+        and effect from state so the tooltip reflects the current state
+        when hovered (the callable is evaluated lazily by the
+        TooltipManager only when the region is hovered).
+        """
+        def _text():
+            state = self.game.state
+            lvl = state.upgrade_level(key)
+            cost = game_economy.upgrade_cost(state, key)
+            base = cfg.UPGRADE_BASE_EFFECT.get(key, 0.0)
+            growth = cfg.UPGRADE_EFFECT_GROWTH.get(key, 1.0)
+            effect = base * (growth ** max(0, lvl - 1)) * max(1, lvl)
+            can = game_economy.can_upgrade(state, key)
+            status = "Affordable" if can else "Need more gold"
+            return (f"{label}\nLevel: {lvl}/{cfg.UPGRADE_MAX_LEVEL}\n"
+                    f"Cost: {format_number(cost)} g\n"
+                    f"Next effect: +{format_number(effect)}\n{status}")
+        return _text

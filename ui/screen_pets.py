@@ -4,6 +4,10 @@ Gacha fairness bundle (Task 19):
   * The pull odds (with the soft-pity ramp) are shown in an odds panel.
   * A spark-shop button trades 40 pity tokens for an unlocked non-maxed
     pet. Tokens are cumulative across banners.
+
+Task 36 (pl-hints-nav-tooltips): a TooltipManager with callable-text
+(live values from state) for every pet. The tooltip shows the pet's
+name, description, bond, bonus, and equip status.
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button, currency_pill
+from ui.tooltip import TooltipManager
 from utils import format_number
 from data import pets as pet_def
 from core import gacha
@@ -39,6 +44,9 @@ class PetsScreen:
         self.anim_result = None
         self.anim_t = 0.0
         self.spark_open: bool = False
+        # Task 36: a TooltipManager with callable-text (live values from
+        # state) for every pet.
+        self.tooltips = TooltipManager()
 
     def _pull1(self):
         state = self.game.state
@@ -170,6 +178,39 @@ class PetsScreen:
 
         for b in self.buttons:
             b.draw(surf)
+        # Task 36: register a tooltip per pet with live values (the pet's
+        # name, description, bond, bonus, and equip status — a callable-
+        # text form so the tooltip reflects the current state when
+        # hovered).
+        self.tooltips.clear()
+        for pid, r in self.pet_rects.items():
+            tip = self._pet_tooltip(pid)
+            self.tooltips.register(f"pet:{pid}", r, tip)
+        self.tooltips.update(pygame.mouse.get_pos())
+        self.tooltips.draw(surf)
+
+    def _pet_tooltip(self, pid: str):
+        """A callable tooltip for a pet (live values from state)."""
+        def _text():
+            state = self.game.state
+            p = pet_def.BY_ID.get(pid)
+            if p is None:
+                return ""
+            unlocked = pet_def.is_unlocked(p, state)
+            if not unlocked:
+                return f"{p.name}\nLocked — {p.unlock}"
+            owned = pid in state.pets
+            equipped = pid in state.equipped_pets
+            bond = state.pet_bond(pid)
+            stars = state.pet_stars.get(pid, 0)
+            prestiges = state.pet_prestiges.get(pid, 0)
+            bonus = pet_def.pet_bonus(p, bond, stars, prestiges)
+            status = "EQUIPPED" if equipped else ("Owned" if owned else "Not owned")
+            return (f"{p.name}\n{p.desc}\n"
+                    f"Bond: {bond}/10  Stars: {stars}/{pet_def.PET_STAR_MAX}\n"
+                    f"Bonus: +{format_number(bonus)} {p.buff_key}\n"
+                    f"Prestiges: {prestiges}\n{status}")
+        return _text
 
     def _draw_odds(self, surf, state):
         """Draw the pull-odds panel (visible odds UI).
