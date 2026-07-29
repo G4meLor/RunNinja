@@ -28,6 +28,13 @@ class Ninja:
     slash_anim: float = 0.0       # slash animation timer
     last_damage: float = 0.0
     last_damage_timer: float = 0.0
+    # Task 30 (gfx-sprite-sheet-anim): the slash_anim/bob timers already
+    # existed but were wasted (the screen only used a 1px vertical bob).
+    # The sprite sheet now reads slash_anim (windup/extend/recover) +
+    # bob (idle) + last_damage_timer (hit flinch) to select a frame
+    # from the pre-rolled sprite sheet (see assets.ninja_frame). No new
+    # state here — the timers are the existing ones; this comment is the
+    # cross-reference so a reader sees where the timers are consumed.
 
     # Cached effective stats (recomputed by the runner each tick).
     tap_damage: float = 10.0

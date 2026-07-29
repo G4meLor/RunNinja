@@ -371,11 +371,24 @@ class GameScreen:
         ly = cfg.ROAD_TOP + cfg.ROAD_H // 2 - 2
 
         # Enemies.
-        from assets import enemy_surface
+        # Task 30 (gfx-sprite-sheet-anim): the bandit shape has a
+        # multi-frame idle cycle; other shapes keep the static sprite.
+        # ``enemy_frame`` returns a zero-copy subsurface (no per-frame
+        # allocation, same pixel count + format as the static sprite).
+        # Pin to frame 0 when ``reduced_motion`` (or the low render tier,
+        # which reduced_motion forces) so the animation is disabled for
+        # accessibility.
+        from assets import enemy_frame
+        from core.quality import parallax_enabled
+        # The sprite-sheet animation is gated on the same tier path as
+        # parallax (low tier disables both): the tier is the single
+        # source of truth and the reduced_motion gate is never bypassed.
+        anim_enabled = parallax_enabled(state.effective_render_quality())
         for e in world.enemies:
             if not e.alive and e.last_damage_timer <= -0.3:
                 continue
-            es = enemy_surface(e.edef, size=e.size * 2)
+            es = enemy_frame(e.edef, size=e.size * 2, bob=e.bob,
+                             reduced_motion=not anim_enabled)
             ex = int(e.x) + ox
             ey = ly + 8 + oy
             e.y = ey
@@ -425,8 +438,24 @@ class GameScreen:
                 draw_text_center(surf, "ELITE", (ex, ey - 44), font_xs(bold=True), C.text_warn)
 
         # Ninja.
-        from assets import ninja_surface
-        ns = ninja_surface(72)
+        # Task 30 (gfx-sprite-sheet-anim): the ninja sprite sheet is
+        # pre-rolled at cache time (8 frames: idle bob x2, slash
+        # windup/extend/recover, hit flinch, dead). ``ninja_frame``
+        # returns a zero-copy subsurface (no per-frame allocation, same
+        # pixel count + format as the static sprite). Frame selection is
+        # from ``slash_anim`` (windup/extend/recover), ``bob`` (idle),
+        # and ``last_damage_timer`` (hit flinch). Pin to frame 0 when
+        # ``reduced_motion`` (or the low render tier, which reduced_motion
+        # forces) so the animation is disabled for accessibility. The
+        # screen's vertical bob (math.sin(bob * 4) * 2) is kept as the
+        # positional bob — the frame selection adds the in-sprite pose
+        # on top of the positional bob, so the two compose.
+        from assets import ninja_frame
+        from core.quality import parallax_enabled
+        anim_enabled = parallax_enabled(state.effective_render_quality())
+        ns = ninja_frame(72, runner.ninja.slash_anim, runner.ninja.bob,
+                         last_damage_timer=runner.ninja.last_damage_timer,
+                         reduced_motion=not anim_enabled)
         bob = math.sin(runner.ninja.bob * 4) * 2
         nx = 180 + ox
         ny = ly - 30 + bob + oy

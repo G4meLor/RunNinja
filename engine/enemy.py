@@ -80,6 +80,10 @@ class Enemy:
     flash: float = 0.0
     last_damage_timer: float = 0.0
     bob: float = 0.0
+    # Task 30 (gfx-sprite-sheet-anim): the bandit shape has a multi-frame
+    # idle cycle; the bob timer selects the frame (see
+    # assets.enemy_frame). No new state here — the bob timer is the
+    # existing one; this comment is the cross-reference.
     # Boss soft-phase scaling (Task 13): the phase is DERIVED from HP each
     # tick (no new state machine, just scaling). ``attack_interval`` scales
     # down as HP drops so the boss attacks faster; ``attack_pattern`` is a

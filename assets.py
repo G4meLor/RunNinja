@@ -21,53 +21,241 @@ def hsl(h: int, s: float, l: float) -> Tuple[int, int, int]:
 
 
 # === Ninja ===
+# Task 30 (gfx-sprite-sheet-anim): the ninja is the most-seen sprite and
+# the slash_anim/bob timers already exist but are wasted (the screen only
+# used a 1px vertical bob). We pre-roll a sprite sheet at cache time:
+# 8 frames stacked horizontally into one wide SRCALPHA sheet, blit by
+# sub-rect (``subsurface`` is a zero-copy view — no per-frame allocation).
+# Frame selection is from ``slash_anim`` (windup/extend/recover) and
+# ``bob`` (idle). Frame 0 is the static fallback (graceful degradation).
+#
+# Frame layout (8 frames, each size x size):
+#   0: idle neutral (the static fallback)
+#   1: idle bob up   (sin(bob*4) > 0)
+#   2: idle bob down (sin(bob*4) < 0)
+#   3: slash windup  (0.10 < slash_anim <= 0.15, the crouch before the lunge)
+#   4: slash extend  (0.05 < slash_anim <= 0.10, the lunge forward)
+#   5: slash recover (0.0  < slash_anim <= 0.05, the return to neutral)
+#   6: hit flinch    (last_damage_timer > 0, the recoil when hit)
+#   7: dead          (the dimmed corpse frame; the screen tints this further)
 _NINJA_CACHE: dict[int, pygame.Surface] = {}
+_NINJA_SHEET_CACHE: dict[int, pygame.Surface] = {}
+# The 8 frame indices (named for readability; the selector uses the
+# integer indices so a typo in a name never breaks the sheet).
+_NINJA_FRAME_IDLE = 0
+_NINJA_FRAME_IDLE_UP = 1
+_NINJA_FRAME_IDLE_DOWN = 2
+_NINJA_FRAME_SLASH_WINDUP = 3
+_NINJA_FRAME_SLASH_EXTEND = 4
+_NINJA_FRAME_SLASH_RECOVER = 5
+_NINJA_FRAME_HIT_FLINCH = 6
+_NINJA_FRAME_DEAD = 7
+_NINJA_FRAME_COUNT = 8
 
 
-def ninja_surface(size: int = 64) -> pygame.Surface:
-    cached = _NINJA_CACHE.get(size)
-    if cached is not None:
-        return cached
-    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+def _draw_ninja_frame(surf: pygame.Surface, size: int, frame: int) -> None:
+    """Draw one ninja frame onto ``surf`` (a size x size SRCALPHA surface).
+
+    The frames are deliberately cheap variations on the static ninja:
+    the body + headband + eyes + sword are drawn for every frame, then a
+    per-frame offset / arm position / tint is applied so the frames read
+    as a small animation (idle bob, slash lunge, hit flinch) without
+    redrawing the whole sprite from scratch. Frame 0 is the neutral
+    static pose (the graceful-degradation fallback).
+    """
     cx, cy = size // 2, size // 2
     body = (40, 40, 60)
     headband = (220, 60, 60)
     skin = (220, 180, 150)
-    pygame.draw.rect(surf, body, (cx - 14, cy - 6, 28, 26), border_radius=6)
-    pygame.draw.circle(surf, skin, (cx, cy - 14), 10)
-    pygame.draw.rect(surf, headband, (cx - 12, cy - 20, 24, 5))
-    pygame.draw.rect(surf, headband, (cx + 8, cy - 22, 14, 3))
-    pygame.draw.line(surf, (20, 20, 30), (cx - 5, cy - 14), (cx - 2, cy - 14), 2)
-    pygame.draw.line(surf, (20, 20, 30), (cx + 2, cy - 14), (cx + 5, cy - 14), 2)
-    pygame.draw.line(surf, (220, 220, 230), (cx - 18, cy - 2), (cx - 6, cy + 18), 3)
-    pygame.draw.rect(surf, headband, (cx - 22, cy + 16, 8, 3))
+    # Per-frame vertical offset (the idle bob + the slash lunge + the
+    # hit flinch all manifest as a small y shift so the frames read as
+    # motion without redrawing the limbs).
+    dy = 0
+    if frame == _NINJA_FRAME_IDLE_UP:
+        dy = -2  # bob up
+    elif frame == _NINJA_FRAME_IDLE_DOWN:
+        dy = 2   # bob down
+    elif frame == _NINJA_FRAME_SLASH_WINDUP:
+        dy = 1   # crouch (compress before the lunge)
+    elif frame == _NINJA_FRAME_SLASH_EXTEND:
+        dy = -3  # lunge forward + up
+    elif frame == _NINJA_FRAME_SLASH_RECOVER:
+        dy = 1   # settling back
+    elif frame == _NINJA_FRAME_HIT_FLINCH:
+        dy = 2   # recoil back
+    elif frame == _NINJA_FRAME_DEAD:
+        dy = 4   # slumped
+    # Draw the body + head + headband + eyes + sword at the per-frame
+    # offset. The sword arm shifts forward on the extend frame so the
+    # slash reads as a lunge.
+    pygame.draw.rect(surf, body, (cx - 14, cy - 6 + dy, 28, 26), border_radius=6)
+    pygame.draw.circle(surf, skin, (cx, cy - 14 + dy), 10)
+    pygame.draw.rect(surf, headband, (cx - 12, cy - 20 + dy, 24, 5))
+    pygame.draw.rect(surf, headband, (cx + 8, cy - 22 + dy, 14, 3))
+    pygame.draw.line(surf, (20, 20, 30), (cx - 5, cy - 14 + dy), (cx - 2, cy - 14 + dy), 2)
+    pygame.draw.line(surf, (20, 20, 30), (cx + 2, cy - 14 + dy), (cx + 5, cy - 14 + dy), 2)
+    # The sword arm: on the extend frame, the arm reaches forward (a
+    # longer, more horizontal stroke) so the slash reads as a lunge.
+    if frame == _NINJA_FRAME_SLASH_EXTEND:
+        pygame.draw.line(surf, (220, 220, 230),
+                         (cx - 18, cy - 2 + dy), (cx + 6, cy + 14 + dy), 3)
+    else:
+        pygame.draw.line(surf, (220, 220, 230),
+                         (cx - 18, cy - 2 + dy), (cx - 6, cy + 18 + dy), 3)
+    pygame.draw.rect(surf, headband, (cx - 22, cy + 16 + dy, 8, 3))
+    # The dead frame is dimmed (the screen tints it further with
+    # BLEND_RGBA_MULT on the dead-path; this is the base dim).
+    if frame == _NINJA_FRAME_DEAD:
+        dim = pygame.Surface((size, size), pygame.SRCALPHA)
+        dim.fill((80, 80, 100, 255))
+        surf.blit(dim, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+
+def ninja_surface(size: int = 64) -> pygame.Surface:
+    """The cached static ninja sprite (frame 0 of the sprite sheet).
+
+    Kept for backward compatibility — the bestiary / hero / menu screens
+    and the skill-FX afterimage all read this single-sprite API. The
+    sprite is frame 0 of the sprite sheet (the static fallback), so the
+    two never diverge.
+    """
+    cached = _NINJA_CACHE.get(size)
+    if cached is not None:
+        return cached
+    # Frame 0 is the static sprite; build it once and cache it.
+    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    _draw_ninja_frame(surf, size, _NINJA_FRAME_IDLE)
     surf = surf.convert_alpha()
     _NINJA_CACHE[size] = surf
     return surf
 
 
-# === Enemy ===
-_ENEMY_CACHE: dict[tuple, pygame.Surface] = {}
+def ninja_sprite_sheet(size: int = 64) -> pygame.Surface:
+    """The cached ninja sprite sheet (8 frames stacked horizontally).
 
+    Returns a wide SRCALPHA surface (size * 8 x size) with
+    ``convert_alpha``. The 8 frames are:
+      0: idle neutral (the static fallback)
+      1: idle bob up
+      2: idle bob down
+      3: slash windup
+      4: slash extend
+      5: slash recover
+      6: hit flinch
+      7: dead
 
-def enemy_surface(edef, size: int = 48) -> pygame.Surface:
-    key = (getattr(edef, "id", str(edef)), size)
-    cached = _ENEMY_CACHE.get(key)
+    Cached per size; the sheet is built once at cache-miss time and the
+    per-frame selection (``ninja_frame``) is a zero-copy ``subsurface``
+    view, so the per-frame blit cost is identical to the static sprite
+    (same pixel count, same format, no allocation).
+    """
+    cached = _NINJA_SHEET_CACHE.get(size)
     if cached is not None:
         return cached
-    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    sheet = pygame.Surface((size * _NINJA_FRAME_COUNT, size), pygame.SRCALPHA)
+    for i in range(_NINJA_FRAME_COUNT):
+        _draw_ninja_frame(sheet, size, i)
+        # The frame is already on the sheet (no per-frame surface); the
+        # border between frames is implicit (each frame occupies
+        # [i*size, (i+1)*size) horizontally).
+    sheet = sheet.convert_alpha()
+    _NINJA_SHEET_CACHE[size] = sheet
+    return sheet
+
+
+def ninja_frame(size: int = 64, slash_anim: float = 0.0,
+                bob: float = 0.0, last_damage_timer: float = 0.0,
+                reduced_motion: bool = False) -> pygame.Surface:
+    """Select the ninja frame sub-rect from the cached sprite sheet.
+
+    Returns a ``subsurface`` (zero-copy view) of the sheet — no
+    per-frame allocation, same pixel count + format as the static
+    sprite, so the per-frame blit cost is identical.
+
+    Frame selection:
+      * ``reduced_motion`` pins to frame 0 (the static fallback).
+      * ``last_damage_timer > 0`` selects the hit-flinch frame (the
+        ninja recoils when hit; this takes priority over slash so a hit
+        mid-slash reads as a flinch, not a slash).
+      * ``slash_anim > 0.10`` selects the windup frame (the crouch
+        before the lunge).
+      * ``0.05 < slash_anim <= 0.10`` selects the extend frame (the
+        lunge forward).
+      * ``0.0 < slash_anim <= 0.05`` selects the recover frame (the
+        return to neutral).
+      * ``slash_anim == 0`` (idle): the bob timer selects the idle
+        frame. ``sin(bob * 4) > 0`` -> idle up; ``sin(bob * 4) < 0`` ->
+        idle down; else neutral (frame 0).
+
+    Frame 0 is the graceful-degradation fallback (any unknown state
+    lands on frame 0).
+    """
+    sheet = ninja_sprite_sheet(size)
+    if reduced_motion:
+        idx = _NINJA_FRAME_IDLE
+    elif last_damage_timer > 0:
+        idx = _NINJA_FRAME_HIT_FLINCH
+    elif slash_anim > 0.10:
+        idx = _NINJA_FRAME_SLASH_WINDUP
+    elif slash_anim > 0.05:
+        idx = _NINJA_FRAME_SLASH_EXTEND
+    elif slash_anim > 0.0:
+        idx = _NINJA_FRAME_SLASH_RECOVER
+    else:
+        # Idle: the bob timer selects the idle frame. sin(bob * 4) is
+        # the same function the screen used for the 1px vertical bob, so
+        # the frame selection lines up with the old bob phase.
+        phase = math.sin(bob * 4)
+        if phase > 0:
+            idx = _NINJA_FRAME_IDLE_UP
+        elif phase < 0:
+            idx = _NINJA_FRAME_IDLE_DOWN
+        else:
+            idx = _NINJA_FRAME_IDLE
+    return sheet.subsurface((idx * size, 0, size, size))
+
+
+# === Enemy ===
+# Task 30 (gfx-sprite-sheet-anim): the bandit shape gets a multi-frame
+# idle cycle (3 frames) so at least one enemy shape has a visible idle
+# animation. Other shapes keep the single static sprite (graceful
+# degradation — ``enemy_frame`` returns frame 0 of a 1-frame sheet,
+# which is the static sprite, so the per-frame blit cost is identical).
+_ENEMY_CACHE: dict[tuple, pygame.Surface] = {}
+_ENEMY_SHEET_CACHE: dict[tuple, pygame.Surface] = {}
+# The bandit idle cycle: 3 frames (neutral, lean forward, lean back).
+# The bandit bobs slightly as it walks; the cycle reads as a shuffling
+# gait. Frame 0 is the neutral (the static fallback).
+_BANDIT_FRAME_COUNT = 3
+
+
+def _draw_enemy_frame(surf: pygame.Surface, edef, size: int, frame: int,
+                      frame_count: int) -> None:
+    """Draw one enemy frame onto ``surf`` (a size x size SRCALPHA surface).
+
+    For the bandit shape with ``frame_count > 1``, the frame is a small
+    horizontal lean (a walking gait). Other shapes draw the static
+    sprite (frame 0 only).
+    """
     base = hsl(edef.hue, 0.6, 0.5)
     dark = hsl(edef.hue, 0.5, 0.30)
     light = hsl(edef.hue, 0.5, 0.7)
     cx, cy = size // 2, size // 2
     r = size // 3
     shape = edef.shape
+    # Per-frame horizontal offset for the bandit's walking gait.
+    dx = 0
+    if shape == "bandit" and frame_count > 1:
+        if frame == 1:
+            dx = -1  # lean forward (left)
+        elif frame == 2:
+            dx = 1   # lean back (right)
     if shape == "bandit":
-        pygame.draw.rect(surf, base, (cx - r, cy - 4, r * 2, r + 4), border_radius=4)
-        pygame.draw.circle(surf, dark, (cx, cy - 8), r - 2)
-        pygame.draw.rect(surf, (180, 40, 40), (cx - r + 2, cy - 12, r * 2 - 4, 3))
-        pygame.draw.circle(surf, (255, 80, 80), (cx - 4, cy - 6), 2)
-        pygame.draw.circle(surf, (255, 80, 80), (cx + 4, cy - 6), 2)
+        pygame.draw.rect(surf, base, (cx - r + dx, cy - 4, r * 2, r + 4), border_radius=4)
+        pygame.draw.circle(surf, dark, (cx + dx, cy - 8), r - 2)
+        pygame.draw.rect(surf, (180, 40, 40), (cx - r + 2 + dx, cy - 12, r * 2 - 4, 3))
+        pygame.draw.circle(surf, (255, 80, 80), (cx - 4 + dx, cy - 6), 2)
+        pygame.draw.circle(surf, (255, 80, 80), (cx + 4 + dx, cy - 6), 2)
     elif shape in ("oni", "demon"):
         pygame.draw.rect(surf, base, (cx - r, cy - 4, r * 2, r + 4), border_radius=4)
         pygame.draw.polygon(surf, dark, [(cx - 8, cy - 4), (cx - 12, cy - 16), (cx - 4, cy - 8)])
@@ -100,9 +288,91 @@ def enemy_surface(edef, size: int = 48) -> pygame.Surface:
         pygame.draw.circle(surf, (255, 200, 60), (cx - r + 4, cy), 2)
     else:
         pygame.draw.circle(surf, base, (cx, cy), r)
+
+
+def _enemy_frame_count(edef) -> int:
+    """The number of frames in this enemy's sprite sheet.
+
+    The bandit shape gets a 3-frame idle cycle; other shapes get 1
+    frame (the static sprite — graceful degradation).
+    """
+    if getattr(edef, "shape", "") == "bandit":
+        return _BANDIT_FRAME_COUNT
+    return 1
+
+
+def enemy_surface(edef, size: int = 48) -> pygame.Surface:
+    """The cached static enemy sprite (frame 0 of the sprite sheet).
+
+    Kept for backward compatibility — the bestiary / death-FX / silhouette
+    screens all read this single-sprite API. The sprite is frame 0 of
+    the sprite sheet (the static fallback), so the two never diverge.
+    """
+    key = (getattr(edef, "id", str(edef)), size)
+    cached = _ENEMY_CACHE.get(key)
+    if cached is not None:
+        return cached
+    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    _draw_enemy_frame(surf, edef, size, 0, _enemy_frame_count(edef))
     surf = surf.convert_alpha()
     _ENEMY_CACHE[key] = surf
     return surf
+
+
+def enemy_sprite_sheet(edef, size: int = 48) -> pygame.Surface:
+    """The cached enemy sprite sheet (frames stacked horizontally).
+
+    Returns a wide SRCALPHA surface (size * frame_count x size) with
+    ``convert_alpha``. The bandit shape gets a 3-frame idle cycle; other
+    shapes get a 1-frame sheet (the static sprite). Cached per
+    (edef id, size); the sheet is built once at cache-miss time and the
+    per-frame selection (``enemy_frame``) is a zero-copy ``subsurface``
+    view, so the per-frame blit cost is identical to the static sprite.
+    """
+    key = (getattr(edef, "id", str(edef)), size)
+    cached = _ENEMY_SHEET_CACHE.get(key)
+    if cached is not None:
+        return cached
+    frame_count = _enemy_frame_count(edef)
+    sheet = pygame.Surface((size * frame_count, size), pygame.SRCALPHA)
+    for i in range(frame_count):
+        _draw_enemy_frame(sheet, edef, size, i, frame_count)
+    sheet = sheet.convert_alpha()
+    _ENEMY_SHEET_CACHE[key] = sheet
+    return sheet
+
+
+def enemy_frame(edef, size: int = 48, bob: float = 0.0,
+                reduced_motion: bool = False) -> pygame.Surface:
+    """Select the enemy frame sub-rect from the cached sprite sheet.
+
+    Returns a ``subsurface`` (zero-copy view) of the sheet — no
+    per-frame allocation, same pixel count + format as the static
+    sprite, so the per-frame blit cost is identical.
+
+    Frame selection:
+      * ``reduced_motion`` pins to frame 0 (the static fallback).
+      * The bandit shape has a 3-frame idle cycle: the bob timer selects
+        the frame (sin(bob * 4) > 0 -> lean forward, < 0 -> lean back,
+        == 0 -> neutral). Other shapes have a 1-frame sheet (frame 0,
+        the static sprite — graceful degradation).
+
+    Frame 0 is the graceful-degradation fallback.
+    """
+    sheet = enemy_sprite_sheet(edef, size)
+    frame_count = _enemy_frame_count(edef)
+    if reduced_motion or frame_count == 1:
+        idx = 0
+    else:
+        # The bandit's idle cycle: the bob timer selects the frame.
+        phase = math.sin(bob * 4)
+        if phase > 0:
+            idx = 1  # lean forward
+        elif phase < 0:
+            idx = 2  # lean back
+        else:
+            idx = 0  # neutral
+    return sheet.subsurface((idx * size, 0, size, size))
 
 
 # === Firefly ===
