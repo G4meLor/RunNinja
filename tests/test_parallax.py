@@ -19,6 +19,30 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 
+def _reinit_display():
+    """Re-init pygame + the display if a prior test quit pygame.
+
+    The ``pygame_headless`` fixture is session-scoped; prior tests in
+    this file call ``pygame.quit()`` which tears down the display. The
+    font cache holds stale freetype objects after quit, so we also clear
+    it (``reset_fonts``) before constructing ``main.Game()`` so the
+    buttons' ``font_md()`` calls build fresh fonts against the live
+    display. Without this, ``Button.__init__`` calls ``font_md(bold=True)``
+    while the display is down, caching a stale font object that segfaults
+    on ``font.render`` during ``draw()``.
+    """
+    import pygame
+    from theme import reset_fonts
+    if not pygame.display.get_init():
+        pygame.init()
+        try:
+            pygame.mixer.init()
+        except pygame.error:
+            pass
+        pygame.display.set_mode((1280, 720))
+    reset_fonts()
+
+
 # ---------------------------------------------------------------------------
 # Layer cache
 # ---------------------------------------------------------------------------
@@ -27,7 +51,6 @@ def test_parallax_layers_exist(pygame_headless):
     from assets import parallax_layers
     layers = parallax_layers(zone_index=0, hue=90)
     assert len(layers) >= 3
-    # Each layer is a cached surface.
     for s in layers:
         assert s is not None
 
@@ -49,6 +72,21 @@ def test_parallax_layers_cached(pygame_headless):
     assert all(a[i] is b[i] for i in range(len(a)))
 
 
+def test_parallax_uses_zone_in_cycle_for_cache(pygame_headless):
+    """The cache keys on (zone_in_cycle, hue) not (zone_index, hue), so
+    zone 0 and zone 9 (both in_cycle 0) share the same cached surfaces.
+    This keeps the cache bounded (9 zones x hues x layers, not unbounded
+    across cycles)."""
+    from assets import parallax_layers
+    a = parallax_layers(zone_index=0, hue=90)
+    b = parallax_layers(zone_index=9, hue=90)
+    assert all(a[i] is b[i] for i in range(len(a))), (
+        "zone 0 and zone 9 should share cached layers (same in_cycle 0)")
+    c = parallax_layers(zone_index=1, hue=90)
+    assert any(a[i] is not c[i] for i in range(len(a))), (
+        "zone 0 and zone 1 should have different layers (different in_cycle)")
+
+
 def test_parallax_layers_cached_per_zone_hue(pygame_headless):
     """Different (zone, hue) produce different surfaces; same (zone, hue)
     produce the same surfaces."""
@@ -56,9 +94,7 @@ def test_parallax_layers_cached_per_zone_hue(pygame_headless):
     a = parallax_layers(zone_index=0, hue=90)
     b = parallax_layers(zone_index=1, hue=120)
     c = parallax_layers(zone_index=0, hue=90)
-    # Same (zone, hue) -> same surfaces.
     assert all(a[i] is c[i] for i in range(len(a)))
-    # Different (zone, hue) -> at least one surface differs.
     assert any(a[i] is not b[i] for i in range(len(a)))
 
 
@@ -83,11 +119,9 @@ def test_parallax_layers_call_convert_alpha(pygame_headless):
     finally:
         pygame.Surface = orig  # type: ignore[assignment]
 
-    # 5 layers, each must call convert_alpha at least once.
     assert CountingSurface.convert_alpha_count >= 5, (
         f"expected >= 5 convert_alpha calls, got "
         f"{CountingSurface.convert_alpha_count}")
-    # Each layer is a pygame Surface.
     for s in layers:
         assert isinstance(s, pygame.Surface)
 
@@ -117,13 +151,13 @@ def test_parallax_accelerates_with_energy(pygame_headless):
     base_scroll = r.scroll_speed()
     state.energy_active = True
     assert r.scroll_speed() > base_scroll
-    # Exactly 2x.
     assert r.scroll_speed() == base_scroll * 2.0
 
 
 def test_gamescreen_has_scroll_accumulator(pygame_headless):
     """The GameScreen has a scroll_accumulator attribute."""
     import main
+    _reinit_display()
     g = main.Game()
     screen = g.screens["game"]
     assert hasattr(screen, "scroll_accumulator")
@@ -139,15 +173,14 @@ def test_parallax_pinned_by_reduced_motion(pygame_headless):
     """When reduced_motion is on, the screen does not advance the scroll
     accumulator (layers pin to 0 scroll)."""
     import main
+    _reinit_display()
     g = main.Game()
     screen = g.screens["game"]
     g.current_screen = "game"
     screen.scroll_accumulator = 0.0
     g.state.reduced_motion = True
-    # Run a few frames.
     for _ in range(10):
         g._update(1 / 60)
-    # The accumulator must not have advanced.
     assert screen.scroll_accumulator == 0.0, (
         f"scroll_accumulator advanced under reduced_motion: "
         f"{screen.scroll_accumulator}")
@@ -159,6 +192,7 @@ def test_parallax_pinned_by_low_tier(pygame_headless):
     """When render_quality is low (and reduced_motion is off), the screen
     does not advance the scroll accumulator."""
     import main
+    _reinit_display()
     g = main.Game()
     screen = g.screens["game"]
     g.current_screen = "game"
@@ -178,6 +212,7 @@ def test_parallax_advances_at_high_tier(pygame_headless):
     """At the high tier (reduced_motion off), the scroll accumulator
     advances each frame."""
     import main
+    _reinit_display()
     g = main.Game()
     screen = g.screens["game"]
     g.current_screen = "game"
@@ -197,6 +232,7 @@ def test_parallax_accelerates_with_energy_in_game(pygame_headless):
     faster than the base rate. Uses a generous energy pool so the Auto
     Katana does not deplete during the test frame."""
     import main
+    _reinit_display()
     g = main.Game()
     screen = g.screens["game"]
     g.current_screen = "game"
@@ -204,12 +240,10 @@ def test_parallax_accelerates_with_energy_in_game(pygame_headless):
     g.state.render_quality = "high"
     g.state.energy = 600.0
     g.state.energy_max = 600.0
-    # Base rate.
     screen.scroll_accumulator = 0.0
     g.state.energy_active = False
     g._update(1 / 60)
     base_advance = screen.scroll_accumulator
-    # 2x rate.
     screen.scroll_accumulator = 0.0
     g.state.energy_active = True
     g.state.energy = 600.0
@@ -228,14 +262,10 @@ def test_parallax_offsets_distinct(pygame_headless):
     """The parallax offsets are 5 distinct values starting at 0, increasing."""
     from ui.screen_game import PARALLAX_OFFSETS
     assert len(PARALLAX_OFFSETS) == 5
-    # All offsets are distinct.
     assert len(set(PARALLAX_OFFSETS)) == len(PARALLAX_OFFSETS)
-    # The first offset is 0 (sky doesn't scroll).
     assert PARALLAX_OFFSETS[0] == 0.0
-    # Offsets are monotonically increasing.
     for i in range(len(PARALLAX_OFFSETS) - 1):
         assert PARALLAX_OFFSETS[i] < PARALLAX_OFFSETS[i + 1]
-    # The last offset is 1.0 (the road scrolls at the full rate).
     assert PARALLAX_OFFSETS[-1] == 1.0
 
 
@@ -244,13 +274,54 @@ def test_parallax_offsets_distinct(pygame_headless):
 # ---------------------------------------------------------------------------
 def test_parallax_blits_without_error(pygame_headless):
     """The game screen draws 30 frames with parallax layers at the high
-    tier without error (60fps maintained)."""
+    tier without error (60fps maintained). Exercises both ``_update()``
+    and ``draw()`` so the render path (the parallax blit + the
+    downstream enemy/ninja positioning that reads ``ly``) is verified.
+    """
+    import pygame
     import main
+    _reinit_display()
     g = main.Game()
+    g.current_screen = "game"
     g.state.render_quality = "high"
     g.state.reduced_motion = False
     for _ in range(30):
         g._update(1 / 60)
+        g.screens["game"].draw(g.screen)
     assert g.state is not None
+    pygame.quit()
+
+
+def test_parallax_blits_without_error_low_tier(pygame_headless):
+    """The game screen draws 30 frames with parallax pinned (low tier)
+    without error. Exercises the ``draw()`` path with the accumulator
+    pinned to 0 so the static-blit path is verified too."""
     import pygame
+    import main
+    _reinit_display()
+    g = main.Game()
+    g.current_screen = "game"
+    g.state.render_quality = "low"
+    g.state.reduced_motion = False
+    for _ in range(30):
+        g._update(1 / 60)
+        g.screens["game"].draw(g.screen)
+    assert g.state is not None
+    pygame.quit()
+
+
+def test_parallax_blits_without_error_reduced_motion(pygame_headless):
+    """The game screen draws 30 frames with reduced_motion on without
+    error. Exercises the ``draw()`` path with the accumulator pinned to
+    0 via the reduced_motion gate."""
+    import pygame
+    import main
+    _reinit_display()
+    g = main.Game()
+    g.current_screen = "game"
+    g.state.reduced_motion = True
+    for _ in range(30):
+        g._update(1 / 60)
+        g.screens["game"].draw(g.screen)
+    assert g.state is not None
     pygame.quit()

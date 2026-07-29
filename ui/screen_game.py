@@ -367,6 +367,9 @@ class GameScreen:
                 surf.blit(layer, (sx + ox, oy))
                 surf.blit(layer, (sx - lw + ox, oy))
 
+        # Lane y-center (used by the enemy + ninja positioning below).
+        ly = cfg.ROAD_TOP + cfg.ROAD_H // 2 - 2
+
         # Enemies.
         from assets import enemy_surface
         for e in world.enemies:

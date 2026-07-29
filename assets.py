@@ -318,14 +318,15 @@ def parallax_layers(zone_index: int, hue: int) -> list:
     pygame.draw.polygon(mh, mid_col, pts)
     layers.append(mh.convert_alpha())
     # Layer 3: Near foliage (offset 0.6, tileable at WINDOW_W). Bushes
-    # at 80px intervals + roadside torches at 200px intervals along the
-    # road edge. 80 divides WINDOW_W (1280/80=16) so the bushes tile.
+    # at 80px intervals + roadside torches at 160px intervals along the
+    # road edge. 80 and 160 both divide WINDOW_W (1280/80=16, 1280/160=8)
+    # so the foliage tiles seamlessly at WINDOW_W.
     nf = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
     foliage_col = hsl(hue, 0.5, 0.10)
     for x in range(0, cfg.WINDOW_W, 80):
         pygame.draw.circle(nf, foliage_col, (x + 20, cfg.ROAD_TOP - 4), 8)
         pygame.draw.circle(nf, foliage_col, (x + 40, cfg.ROAD_TOP - 2), 6)
-    for x in range(80, cfg.WINDOW_W, 200):
+    for x in range(80, cfg.WINDOW_W, 160):
         pygame.draw.rect(nf, (40, 30, 30), (x, cfg.ROAD_TOP - 8, 3, 10))
         pygame.draw.circle(nf, (255, 140, 60), (x + 1, cfg.ROAD_TOP - 12), 5)
     layers.append(nf.convert_alpha())
