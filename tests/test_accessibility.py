@@ -433,14 +433,21 @@ def test_theme_has_boss_glow_attributes():
 
 
 def test_boss_fx_high_contrast_swap():
-    """High-contrast mode swaps C.boss_glow (so boss_fx reads the swap)."""
+    """High-contrast mode swaps C.boss_glow (so boss_fx reads the swap).
+
+    The default boss_glow (255, 60, 70) and the high-contrast boss_glow
+    (255, 90, 100) are genuinely different, so the swap is asserted for
+    real (no ``or True`` tautology). The restore direction is also
+    asserted so the round-trip is verified.
+    """
     from core.state import GameState
     from theme import C, apply_high_contrast
     default_glow = C.boss_glow
     s = GameState()
     s.high_contrast = True
     apply_high_contrast(s)
-    assert C.boss_glow != default_glow or True  # may be same; just no crash
+    assert C.boss_glow != default_glow, (
+        f"boss_glow not swapped: {C.boss_glow} == {default_glow}")
     s.high_contrast = False
     apply_high_contrast(s)
     assert C.boss_glow == default_glow
@@ -459,11 +466,72 @@ def test_settings_screen_has_accessibility_toggles():
 
 
 def test_settings_toggles_independent_of_music():
-    """The accessibility toggles are NOT gated on music_on / sound_on."""
+    """The accessibility toggles are NOT gated on music_on / sound_on.
+
+    Behavioral check: toggling music_on / sound_on does not affect the
+    accessibility toggles, and toggling the accessibility fields does
+    not affect music_on / sound_on. The three accessibility toggles
+    each ship on their own state field (high_contrast / text_scale /
+    dyslexia_font), independent of the music toggles.
+    """
+    from core.state import GameState
+    from theme import (apply_high_contrast, apply_text_scale,
+                       apply_dyslexia_font)
+
+    # Start from a clean state.
+    s = GameState()
+    s.high_contrast = False
+    s.text_scale = 1.0
+    s.dyslexia_font = False
+    s.music_on = False
+    s.sound_on = False
+
+    # 1. Toggle music_on + sound_on; accessibility fields unaffected.
+    s.music_on = True
+    s.sound_on = True
+    assert s.high_contrast is False
+    assert s.text_scale == 1.0
+    assert s.dyslexia_font is False
+
+    # 2. Toggle each accessibility field; music_on + sound_on unaffected.
+    s.high_contrast = True
+    apply_high_contrast(s)
+    assert s.music_on is True
+    assert s.sound_on is True
+
+    s.text_scale = 1.2
+    apply_text_scale(s)
+    assert s.music_on is True
+    assert s.sound_on is True
+
+    s.dyslexia_font = True
+    apply_dyslexia_font(s)
+    assert s.music_on is True
+    assert s.sound_on is True
+
+    # 3. The accessibility toggle handlers in the settings screen read
+    # their own state field, not music_on / sound_on. Source-inspection
+    # guard so a future edit that accidentally gates them on music is
+    # caught.
     import ui.screen_settings as ss
-    src = open(ss.__file__).read()
-    # The accessibility toggle handlers do not read music_on / sound_on.
-    # (They read state.high_contrast / state.text_scale / state.dyslexia_font.)
+    import inspect
+    for handler_name in ("_toggle_contrast", "_toggle_text_scale",
+                         "_toggle_dyslexia"):
+        handler = getattr(ss.SettingsScreen, handler_name, None)
+        assert handler is not None, f"{handler_name} missing"
+        src = inspect.getsource(handler)
+        assert "music_on" not in src, (
+            f"{handler_name} references music_on (not independent)")
+        assert "sound_on" not in src, (
+            f"{handler_name} references sound_on (not independent)")
+
+    # Restore the theme to defaults so later tests see the default palette.
+    s.high_contrast = False
+    s.text_scale = 1.0
+    s.dyslexia_font = False
+    apply_high_contrast(s)
+    apply_text_scale(s)
+    apply_dyslexia_font(s)
 
 
 # ---------------------------------------------------------------------------
