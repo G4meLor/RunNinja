@@ -14,10 +14,11 @@ import pygame
 import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel, draw_bar
-from ui.widgets import Button
+from ui.widgets import Button, currency_pill
 from utils import format_number
 from engine.ninja import compute_ninja_stats, _upgrade_value, _ascend_tier_mult
-from core.bonuses import aggregate_bonuses
+from core.bonuses import (aggregate_bonuses, forge_enhance, forge_reroll,
+                          forge_salvage, forge_buy_legendary)
 from data import skill_tree as st
 from data import pets as pet_def
 
@@ -53,8 +54,23 @@ class HeroScreen:
         self.game = game
         self.btn_back = Button((16, cfg.WINDOW_H - 60, 120, 44), "Back",
                                on_click=lambda: self.game.set_screen("game"))
-        self.buttons = [self.btn_back]
+        # Forge toggle: opens the Forge panel (enhance/reroll/salvage +
+        # Amber-Shop). The Forge is a one-time management action (no active
+        # play required) -- the toggle is a panel switch, not a combat
+        # action.
+        self.btn_forge = Button((cfg.WINDOW_W - 180, cfg.WINDOW_H - 60,
+                                 160, 44), "Forge",
+                                on_click=self._toggle_forge,
+                                color=(90, 60, 130))
+        self.buttons = [self.btn_back, self.btn_forge]
         self._ninja_big: pygame.Surface | None = None  # cached scaled sprite
+        # Forge panel state: per-slot action buttons + the Amber-Shop
+        # (buy_legendary) buttons. The buttons are rebuilt each draw (the
+        # slot set is static, but the enabled state depends on the live
+        # gold/amber + the piece's value).
+        self._forge_open: bool = False
+        # Per-slot row rectangles (for click hit-testing outside Button).
+        self._forge_slot_rects: dict[str, pygame.Rect] = {}
 
     # -----------------------------------------------------------------
     # Public API
@@ -62,10 +78,19 @@ class HeroScreen:
     def handle(self, event):
         for b in self.buttons:
             b.handle(event)
+        # Forge panel: per-slot action buttons (enhance/reroll/salvage +
+        # buy_legendary). The buttons are rebuilt each draw and stored on
+        # the screen so ``handle`` can dispatch clicks.
+        if self._forge_open:
+            for b in self._forge_buttons():
+                b.handle(event)
 
     def update(self, dt):
         for b in self.buttons:
             b.update(dt)
+        if self._forge_open:
+            for b in self._forge_buttons():
+                b.update(dt)
 
     def draw(self, surf):
         state = self.game.state
@@ -87,9 +112,14 @@ class HeroScreen:
         self._draw_stat_table(surf, state, stats, bd)
         self._draw_tier_ladder(surf, state)
         self._draw_equipped_pets(surf, state)
+        if self._forge_open:
+            self._draw_forge_panel(surf, state)
 
         for b in self.buttons:
             b.draw(surf)
+        if self._forge_open:
+            for b in self._forge_buttons():
+                b.draw(surf)
 
     # -----------------------------------------------------------------
     # Source breakdown
@@ -408,3 +438,161 @@ class HeroScreen:
             else:
                 draw_panel(surf, r, fill=C.panel_lo, border=C.panel_border)
                 draw_text_center(surf, "Empty", r.center, font_sm(), C.text_muted)
+
+    # -----------------------------------------------------------------
+    # Forge panel (cnt-gear-loot-forge, Task 33)
+    # -----------------------------------------------------------------
+    # A one-time management panel: enhance (gold), reroll (amber), salvage
+    # (amber back), and the Amber-Shop (buy a guaranteed legendary with
+    # amber). No affix requires active play -- the Forge is a pure state
+    # mutation (the forge functions in ``core.bonuses`` are pure; no runner,
+    # no combat). The Amber-Shop is a complementary amber sink INSIDE this
+    # system (same module, same ``state.gear`` data model), not a separate
+    # layer.
+    def _toggle_forge(self):
+        self._forge_open = not self._forge_open
+
+    def _forge_buttons(self) -> list[Button]:
+        """Build the per-slot action buttons (rebuilt each draw so the
+        enabled state tracks the live gold/amber + the piece's value).
+
+        Four buttons per slot: Enhance (gold), Reroll (amber), Salvage
+        (amber back), and Buy Legendary (amber, the Amber-Shop). The
+        buttons are stored on the screen so ``handle`` can dispatch clicks
+        before the next draw rebuilds them.
+        """
+        state = self.game.state
+        buttons: list[Button] = []
+        # The panel layout: 4 slot rows, each with a label + 4 action
+        # buttons. The buttons are positioned by the same layout as
+        # ``_draw_forge_panel`` so they align with the drawn rows.
+        panel = pygame.Rect(40, 100, 1200, 460)
+        row_h = 80
+        y0 = panel.y + 56  # below the panel header
+        for i, slot in enumerate(cfg.GEAR_SLOTS):
+            y = y0 + i * row_h
+            g = state.gear.get(slot)
+            # Enhance: gold sink, enabled if the slot has a piece + the
+            # piece is not maxed + the player can afford the gold cost.
+            can_enhance = (g is not None
+                           and g.get("value", 0.0) < cfg.FORGE_ENHANCE_MAX_VALUE
+                           and state.gold >= cfg.FORGE_ENHANCE_GOLD)
+            btn_enh = Button((panel.x + 280, y + 16, 130, 44), "Enhance",
+                             on_click=lambda s=slot: self._do_enhance(s),
+                             enabled=can_enhance, color=(150, 110, 60))
+            # Reroll: amber sink, enabled if the slot has a piece + the
+            # player can afford the amber cost.
+            can_reroll = (g is not None
+                          and state.amber >= cfg.FORGE_REROLL_AMBER)
+            btn_reroll = Button((panel.x + 420, y + 16, 130, 44), "Reroll",
+                                on_click=lambda s=slot: self._do_reroll(s),
+                                enabled=can_reroll, color=(90, 60, 130))
+            # Salvage: returns amber, enabled if the slot has a piece.
+            can_salvage = g is not None
+            btn_salv = Button((panel.x + 560, y + 16, 130, 44), "Salvage",
+                              on_click=lambda s=slot: self._do_salvage(s),
+                              enabled=can_salvage, color=(120, 60, 60))
+            # Buy Legendary (Amber-Shop): amber sink, enabled if the player
+            # can afford the amber cost. Replaces any existing piece in the
+            # slot (one piece per slot).
+            can_buy = state.amber >= cfg.FORGE_LEGENDARY_AMBER
+            btn_buy = Button((panel.x + 700, y + 16, 180, 44),
+                             "Buy Legendary",
+                             on_click=lambda s=slot: self._do_buy_legendary(s),
+                             enabled=can_buy, color=(180, 120, 60))
+            buttons.extend([btn_enh, btn_reroll, btn_salv, btn_buy])
+        return buttons
+
+    def _do_enhance(self, slot: str):
+        state = self.game.state
+        if forge_enhance(state, slot):
+            from assets import play
+            play("gacha", state.sound_on)
+            state.save()
+
+    def _do_reroll(self, slot: str):
+        state = self.game.state
+        if forge_reroll(state, slot):
+            from assets import play
+            play("gacha", state.sound_on)
+            state.save()
+
+    def _do_salvage(self, slot: str):
+        state = self.game.state
+        if forge_salvage(state, slot) > 0:
+            from assets import play
+            play("gacha", state.sound_on)
+            state.save()
+
+    def _do_buy_legendary(self, slot: str):
+        state = self.game.state
+        if forge_buy_legendary(state, slot):
+            from assets import play
+            play("ascend", state.sound_on)
+            state.save()
+
+    def _draw_forge_panel(self, surf, state):
+        """Draw the Forge panel: 4 slot rows + the Amber-Shop header.
+
+        Each row shows the slot's current piece (affix + value + rarity)
+        and the 4 action buttons (Enhance / Reroll / Salvage / Buy
+        Legendary). The buttons themselves are drawn by ``_forge_buttons``
+        (called from ``draw``); this method draws the panel chrome + the
+        piece info so the buttons align with the rows.
+        """
+        panel = pygame.Rect(40, 100, 1200, 460)
+        draw_panel(surf, panel, fill=C.panel, border=C.panel_border)
+        draw_text(surf, "Gear Forge",
+                  (panel.x + 14, panel.y + 6), font_md(bold=True), C.gold)
+        draw_text(surf,
+                  "Enhance (gold)  -  Reroll (amber)  -  Salvage (amber)  "
+                  "-  Amber-Shop (legendary)",
+                  (panel.x + 160, panel.y + 8), font_xs(), C.text_dim)
+
+        # Currency pills (gold + amber) so the player can see the sinks.
+        px = panel.right - 240
+        py = panel.y + 8
+        currency_pill(surf, px, py, "Gold", format_number(state.gold),
+                      C.gold)
+        currency_pill(surf, px + 130, py, "Amber", str(state.amber),
+                      (255, 180, 60))
+
+        # Per-slot rows.
+        row_h = 80
+        y0 = panel.y + 56
+        for i, slot in enumerate(cfg.GEAR_SLOTS):
+            y = y0 + i * row_h
+            r = pygame.Rect(panel.x + 14, y, panel.w - 28, row_h - 8)
+            draw_panel(surf, r, fill=C.panel_lo, border=C.panel_border)
+            # Slot label.
+            draw_text(surf, slot.capitalize(),
+                      (r.x + 12, r.y + 8), font_sm(bold=True), C.text)
+            # Current piece (or "Empty").
+            g = state.gear.get(slot)
+            if g is not None:
+                affix = g.get("affix", "")
+                value = g.get("value", 0.0)
+                rarity = g.get("rarity", "common")
+                bl = _BUFF_LABELS.get(affix, affix)
+                draw_text(surf, f"{bl} +{value * 100:.1f}%",
+                          (r.x + 12, r.y + 30), font_xs(), C.text)
+                draw_text(surf, f"{rarity}",
+                          (r.x + 12, r.y + 48), font_xs(), C.text_dim)
+            else:
+                draw_text(surf, "Empty",
+                          (r.x + 12, r.y + 30), font_xs(), C.text_muted)
+
+        # Footer: the forge cost constants (so the player can see the
+        # sinks before clicking).
+        fy = panel.y + panel.h - 56
+        draw_text(surf,
+                  f"Enhance: {format_number(cfg.FORGE_ENHANCE_GOLD)} gold  "
+                  f"-  Reroll: {cfg.FORGE_REROLL_AMBER} amber  "
+                  f"-  Salvage: {cfg.FORGE_SALVAGE_AMBER_BASE}x rarity amber  "
+                  f"-  Legendary: {cfg.FORGE_LEGENDARY_AMBER} amber",
+                  (panel.x + 14, fy), font_xs(), C.text_dim)
+        draw_text(surf,
+                  "The Forge is a one-time management action -- no active "
+                  "play required. The Amber-Shop is a complementary amber "
+                  "sink inside this system.",
+                  (panel.x + 14, fy + 18), font_xs(), C.text_muted)

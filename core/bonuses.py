@@ -18,6 +18,8 @@ from typing import Callable
 from core.state import GameState
 from data import skill_tree as st
 from data import pets as pet_def
+import config as cfg
+from utils import rng
 
 
 # A provider returns the partial bonus dict for one source.
@@ -314,3 +316,146 @@ def aggregate_bonuses(state: GameState) -> dict[str, float]:
         for k, v in p(state).items():
             out[k] = out.get(k, 0.0) + v
     return out
+
+
+# ---------------------------------------------------------------------------
+# Gear Forge (cnt-gear-loot-forge, Task 33)
+# ---------------------------------------------------------------------------
+# The MANAGEMENT half of the gear split (the model is Task 20). The Forge is
+# a one-time management action (like buying buildings) -- no active play
+# required. The four forge functions are pure state mutations: they read
+# ``state.gear[slot]`` and the forge cost constants in ``config.py`` and
+# mutate the state directly. No runner, no combat, no active skill use.
+#
+# The Amber-Shop (``forge_buy_legendary``) is a complementary amber sink
+# INSIDE this system (same module, same data model) -- not a separate
+# layer. The four actions share the same ``state.gear`` source of truth and
+# the same ``cfg.GEAR_AFFIXES`` / ``cfg.GEAR_RARITY_MULT`` data, so the
+# Forge is a single cohesive system: enhance (gold), reroll (amber),
+# salvage (amber back), buy_legendary (amber). The two amber sinks
+# (reroll + buy_legendary) are complementary, not redundant: reroll
+# improves an existing piece; buy_legendary replaces it with a guaranteed
+# legendary.
+
+
+def forge_enhance(state: GameState, slot: str) -> bool:
+    """Enhance the gear piece in ``slot``: a GOLD sink that multiplies the
+    piece's value by ``cfg.FORGE_ENHANCE_FACTOR``, capped at
+    ``cfg.FORGE_ENHANCE_MAX_VALUE``.
+
+    Requirements:
+      * ``slot`` has a gear piece (``state.gear[slot]`` exists).
+      * The piece's value is below the cap (a maxed piece is a no-op so the
+        player does not waste gold).
+      * ``state.gold >= cfg.FORGE_ENHANCE_GOLD``.
+
+    Returns ``True`` if the enhance was applied, ``False`` otherwise (no
+    gold spent on a False return). The cost is a flat gold amount
+    (rarity-agnostic) so the sink is meaningful at every tier.
+    """
+    g = state.gear.get(slot)
+    if g is None:
+        return False
+    if g.get("value", 0.0) >= cfg.FORGE_ENHANCE_MAX_VALUE:
+        return False  # already maxed -- don't waste gold
+    if state.gold < cfg.FORGE_ENHANCE_GOLD:
+        return False
+    state.gold -= cfg.FORGE_ENHANCE_GOLD
+    new_val = g.get("value", 0.0) * cfg.FORGE_ENHANCE_FACTOR
+    # Clamp to the cap (the last enhance before the cap still pays full
+    # gold but only reaches the cap, not past it).
+    if new_val > cfg.FORGE_ENHANCE_MAX_VALUE:
+        new_val = cfg.FORGE_ENHANCE_MAX_VALUE
+    g["value"] = new_val
+    return True
+
+
+def forge_reroll(state: GameState, slot: str) -> bool:
+    """Reroll the affix of the gear piece in ``slot``: an AMBER sink that
+    picks a random new affix from the slot's pool at the SAME rarity.
+
+    Requirements:
+      * ``slot`` has a gear piece.
+      * ``state.amber >= cfg.FORGE_REROLL_AMBER``.
+
+    Returns ``True`` if the reroll was applied, ``False`` otherwise (no
+    amber spent on a False return). The rarity is preserved (rerolling an
+    epic piece yields an epic piece with a different affix); the value is
+    re-derived from the new affix's base value scaled by the rarity
+    multiplier, so the value is consistent with the new affix.
+    """
+    g = state.gear.get(slot)
+    if g is None:
+        return False
+    if state.amber < cfg.FORGE_REROLL_AMBER:
+        return False
+    pool = cfg.GEAR_AFFIXES.get(slot)
+    if not pool:
+        return False
+    state.amber -= cfg.FORGE_REROLL_AMBER
+    affix_key, base_val = rng().choice(pool)
+    rarity = g.get("rarity", "common")
+    g["affix"] = affix_key
+    g["value"] = base_val * cfg.GEAR_RARITY_MULT.get(rarity, 1.0)
+    return True
+
+
+def forge_salvage(state: GameState, slot: str) -> int:
+    """Salvage the gear piece in ``slot``: returns amber (a fraction scaled
+    by rarity) and removes the piece.
+
+    The amber returned is ``cfg.FORGE_SALVAGE_AMBER_BASE * GEAR_RARITY_MULT[
+    rarity]`` -- a common piece returns the base, a mythic piece returns
+    8x the base. This is the reverse of the Amber-Shop (buy_legendary): the
+    player can convert an unwanted piece back into amber.
+
+    Returns the amber gained (0 if the slot was empty). ``state.amber`` is
+    increased by the same amount (amber is an int, so the gain is rounded
+    down to a whole number).
+    """
+    g = state.gear.get(slot)
+    if g is None:
+        return 0
+    rarity = g.get("rarity", "common")
+    mult = cfg.GEAR_RARITY_MULT.get(rarity, 1.0)
+    gained = int(cfg.FORGE_SALVAGE_AMBER_BASE * mult)
+    state.amber += gained
+    del state.gear[slot]
+    return gained
+
+
+def forge_buy_legendary(state: GameState, slot: str) -> bool:
+    """The Amber-Shop: buy a GUARANTEED legendary gear piece in ``slot``
+    for ``cfg.FORGE_LEGENDARY_AMBER`` amber.
+
+    Requirements:
+      * ``slot`` is a valid gear slot (in ``cfg.GEAR_SLOTS``).
+      * ``state.amber >= cfg.FORGE_LEGENDARY_AMBER``.
+
+    Returns ``True`` if the purchase was applied, ``False`` otherwise (no
+    amber spent on a False return). The new piece replaces any existing
+    piece in the slot (one piece per slot). The affix is random from the
+    slot's pool; the value is the base value scaled by
+    ``GEAR_RARITY_MULT[legendary]``.
+
+    The Amber-Shop is a complementary amber sink INSIDE this system (same
+    module, same data model as the other forge functions) -- not a separate
+    layer. A player who would rather buy a guaranteed legendary than wait
+    for a boss drop can do so with amber; a player who would rather enhance
+    or reroll an existing piece can do so with gold + amber.
+    """
+    if slot not in cfg.GEAR_SLOTS:
+        return False
+    if state.amber < cfg.FORGE_LEGENDARY_AMBER:
+        return False
+    pool = cfg.GEAR_AFFIXES.get(slot)
+    if not pool:
+        return False
+    state.amber -= cfg.FORGE_LEGENDARY_AMBER
+    affix_key, base_val = rng().choice(pool)
+    state.gear[slot] = {
+        "affix": affix_key,
+        "value": base_val * cfg.GEAR_RARITY_MULT["legendary"],
+        "rarity": "legendary",
+    }
+    return True

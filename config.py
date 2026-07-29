@@ -183,6 +183,46 @@ GEAR_RARITY_MULT = {
 
 
 # ---------------------------------------------------------------------------
+# Gear Forge (cnt-gear-loot-forge, Task 33)
+# ---------------------------------------------------------------------------
+# The Forge is a one-time management action (like buying buildings) -- no
+# active play required. The four forge actions are pure state mutations:
+#
+#   * **enhance**: a GOLD sink that multiplies the piece's value by
+#     ``FORGE_ENHANCE_FACTOR`` (1.25x), capped at ``FORGE_ENHANCE_MAX_VALUE``
+#     so a piece cannot be enhanced to infinity. The cost is a flat gold
+#     amount (``FORGE_ENHANCE_GOLD``) -- the gold sink is independent of the
+#     piece's rarity so the sink is meaningful at every tier (a player with
+#     a mythic piece still has a reason to enhance it).
+#   * **reroll**: an AMBER sink that rerolls the affix (random new affix
+#     from the slot's pool) at the SAME rarity. The cost is a flat amber
+#     amount (``FORGE_REROLL_AMBER``).
+#   * **salvage**: returns amber (a fraction of the piece's value, scaled
+#     by rarity via ``FORGE_SALVAGE_AMBER_BASE``) and removes the piece.
+#     This is the reverse of the Amber-Shop: the player can convert an
+#     unwanted piece back into amber.
+#   * **buy_legendary** (the Amber-Shop): an AMBER sink that buys a
+#     GUARANTEED legendary gear piece in a slot. The cost is a flat amber
+#     amount (``FORGE_LEGENDARY_AMBER``). The Amber-Shop is a complementary
+#     amber sink INSIDE this system (same module, same data model) -- not a
+#     separate layer.
+#
+# The costs are tuned so the gold sink (enhance) and the amber sinks
+# (reroll + buy_legendary) are both meaningful: a player who kills bosses
+# for gear can still enhance/reroll/salvage, and a player who would rather
+# buy a guaranteed legendary can do so with amber. The two paths are
+# complementary, not redundant.
+FORGE_ENHANCE_GOLD = 50_000       # gold per enhance (flat, rarity-agnostic)
+FORGE_ENHANCE_FACTOR = 1.25       # value *= 1.25 per enhance
+FORGE_ENHANCE_MAX_VALUE = 2.0     # cap (a single piece cannot exceed +200%)
+FORGE_REROLL_AMBER = 25           # amber per reroll (flat, rarity-agnostic)
+FORGE_SALVAGE_AMBER_BASE = 5      # base amber returned per salvage (scaled
+                                  # by rarity: common=1x, rare=2x, epic=4x,
+                                  # legendary=6x, mythic=8x)
+FORGE_LEGENDARY_AMBER = 500       # amber for a guaranteed legendary piece
+
+
+# ---------------------------------------------------------------------------
 # Upgrade economy
 # ---------------------------------------------------------------------------
 # Run upgrades (Tap Ninja — temporary, bought with gold, reset on ascension)
