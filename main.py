@@ -54,6 +54,15 @@ class Game:
         self.state = GameState.load()
         if self.state.pet_pulls == 0 and self.state.monsters_killed == 0:
             self.state.gold += 200
+        # Task 38 (pl-accessibility): apply the saved accessibility
+        # settings at startup so the high-contrast palette, text scale,
+        # and dyslexia font are active from the first frame. Each is
+        # independent of music (the toggles are separate state fields).
+        from theme import (apply_high_contrast, apply_text_scale,
+                           apply_dyslexia_font)
+        apply_high_contrast(self.state)
+        apply_text_scale(self.state)
+        apply_dyslexia_font(self.state)
         # Daily login streak reward (on load).
         streak, reward, is_new_day = check_streak(self.state)
         if is_new_day and reward > 0:

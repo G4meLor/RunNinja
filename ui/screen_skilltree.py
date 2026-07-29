@@ -19,6 +19,7 @@ from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel
 from ui.widgets import Button, currency_pill
 from ui.tooltip import TooltipManager
+from ui.cb_symbols import branch_symbol  # Task 38: color-blind-safe symbols
 from utils import format_number
 from data import skill_tree as st
 from core import skill_unlock
@@ -130,6 +131,11 @@ class SkillTreeScreen:
             col = st.branch_color(branch)
             header = pygame.Rect(bx + 10, top_y, col_w - 20, 30)
             draw_panel(surf, header, fill=(col[0] // 5, col[1] // 5, col[2] // 5), border=col)
+            # Task 38 (pl-accessibility): a color-blind-safe branch symbol
+            # is blitted alongside the branch color (the shape is the
+            # redundant cue; the color stays).
+            sym = branch_symbol(branch, 22)
+            surf.blit(sym, (header.x + 6, header.centery - sym.get_height() // 2))
             draw_text_center(surf, branch.capitalize(), header.center, font_sm(bold=True), col)
             nodes = st.nodes_by_branch(branch)
             for j, node in enumerate(nodes):

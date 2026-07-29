@@ -54,6 +54,7 @@ from theme import (
     C, font_xs, font_sm, font_md, font_lg, font_xl,
     draw_text_center,
 )
+from ui.cb_symbols import rarity_symbol  # Task 38: color-blind-safe symbols
 from utils import rng, clamp, ease_out_cubic, ease_in_out_cubic, lerp, lerp_color
 from core.gacha import PetPullResult
 from data import pets as pet_def
@@ -896,9 +897,15 @@ class GachaFxSystem:
             surf.blit(new, new.get_rect(
                 center=(_CARD_W // 2, _CARD_H - 40)))
         # Rarity label at the top.
+        # Task 38 (pl-accessibility): a color-blind-safe symbol is blitted
+        # alongside the rarity color (the shape is the redundant cue;
+        # the color stays). Blitted at the top-left of the card so it
+        # doesn't overlap the centered rarity label.
         rar_label = font_xs(bold=True).render(rarity.upper(), True, col)
         surf.blit(rar_label, rar_label.get_rect(
             midtop=(_CARD_W // 2, 10)))
+        sym = rarity_symbol(rarity, 18)
+        surf.blit(sym, (8, 8))
         return surf.convert_alpha()
 
     def _build_shards(self, color: tuple[int, int, int], multi: bool,

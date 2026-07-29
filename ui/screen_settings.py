@@ -4,8 +4,10 @@ from __future__ import annotations
 import os
 import pygame
 import config as cfg
-from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
-from theme import draw_text, draw_text_center, draw_panel
+from theme import (C, font_xs, font_sm, font_md, font_lg, font_xl,
+                   draw_text, draw_text_center, draw_panel,
+                   apply_high_contrast, apply_text_scale, apply_dyslexia_font,
+                   set_text_scale, set_dyslexia_font)
 from ui.widgets import Button
 from core.state import SAVE_FILE
 from core.quality import valid_tiers
@@ -18,6 +20,12 @@ from utils import clamp
 _QUALITY_ORDER = list(valid_tiers())
 # Display labels for the tier (capitalised; the stored value is lowercase).
 _QUALITY_LABELS = {"high": "High", "med": "Medium", "low": "Low"}
+
+# Task 38 (pl-accessibility): the text-scale cycle. Cycles through four
+# steps within the 0.8x-1.6x range (the brief's specimen). The cycle is
+# 0.8 -> 1.0 -> 1.2 -> 1.6 -> 0.8 (clamped on apply).
+_TEXT_SCALE_STEPS = (0.8, 1.0, 1.2, 1.6)
+_TEXT_SCALE_LABELS = {0.8: "0.8x", 1.0: "1.0x", 1.2: "1.2x", 1.6: "1.6x"}
 
 
 class SettingsScreen:
@@ -42,16 +50,30 @@ class SettingsScreen:
         # letting the player pick a tier that would be silently overridden).
         self.btn_quality = Button((cfg.WINDOW_W // 2 - 160, 430, 320, 48), "",
                                   on_click=self._toggle_quality)
-        self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 540, 320, 48),
+        # Task 38 (pl-accessibility): three accessibility toggles, each
+        # shipping INDEPENDENTLY of music (not gated on music_on /
+        # sound_on). The high-contrast toggle swaps the theme palette;
+        # the text-scale toggle cycles 0.8x -> 1.0x -> 1.2x -> 1.6x; the
+        # dyslexia-font toggle enables a monospace fallback + wider letter
+        # spacing. Each saves immediately + re-applies.
+        self.btn_contrast = Button((cfg.WINDOW_W // 2 - 160, 500, 320, 40), "",
+                                   on_click=self._toggle_contrast)
+        self.btn_text_scale = Button((cfg.WINDOW_W // 2 - 160, 546, 320, 40), "",
+                                     on_click=self._toggle_text_scale)
+        self.btn_dyslexia = Button((cfg.WINDOW_W // 2 - 160, 592, 320, 40), "",
+                                   on_click=self._toggle_dyslexia)
+        self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 648, 320, 44),
                                 "Reset all progress", on_click=self._reset, color=(160, 50, 60),
                                 sound="ui_confirm")
         self.buttons = [self.btn_back, self.btn_sound, self.btn_music,
-                        self.btn_motion, self.btn_quality, self.btn_reset]
+                        self.btn_motion, self.btn_quality,
+                        self.btn_contrast, self.btn_text_scale, self.btn_dyslexia,
+                        self.btn_reset]
         # Task 37 (pl-music-sfx): a volume slider for ``state.volume``
         # (0.0..1.0). The slider sets ``state.volume`` and saves. The
         # slider rect is below the music toggle; the player drags the
         # handle to set the volume.
-        self._slider_rect = pygame.Rect(cfg.WINDOW_W // 2 - 160, 500, 320, 16)
+        self._slider_rect = pygame.Rect(cfg.WINDOW_W // 2 - 160, 470, 320, 16)
         self._slider_dragging = False
         self.reset_confirm = 0.0
 
@@ -73,6 +95,35 @@ class SettingsScreen:
         # tracks the effective tier immediately (reduced_motion forces
         # low; turning it off restores the stored tier's cap).
         self._apply_tier_to_particles()
+
+    # Task 38 (pl-accessibility): the three accessibility toggle handlers.
+    # Each is INDEPENDENT of music (does not read music_on / sound_on).
+    def _toggle_contrast(self):
+        """Toggle the high-contrast palette (ships independently of music)."""
+        state = self.game.state
+        state.high_contrast = not state.high_contrast
+        apply_high_contrast(state)
+        state.save()
+
+    def _toggle_text_scale(self):
+        """Cycle the text scale 0.8x -> 1.0x -> 1.2x -> 1.6x -> 0.8x."""
+        state = self.game.state
+        cur = state.text_scale
+        # Find the current step (clamped values map to the nearest step).
+        try:
+            i = _TEXT_SCALE_STEPS.index(cur)
+        except ValueError:
+            i = 1  # default to 1.0x if the stored value is off-step
+        state.text_scale = _TEXT_SCALE_STEPS[(i + 1) % len(_TEXT_SCALE_STEPS)]
+        apply_text_scale(state)
+        state.save()
+
+    def _toggle_dyslexia(self):
+        """Toggle the dyslexia-friendly font (monospace + letter spacing)."""
+        state = self.game.state
+        state.dyslexia_font = not state.dyslexia_font
+        apply_dyslexia_font(state)
+        state.save()
 
     def _toggle_quality(self):
         """Cycle the render-quality tier High -> Medium -> Low -> High.
@@ -178,6 +229,33 @@ class SettingsScreen:
                 self.btn_quality.color = (70, 90, 120)
             else:  # low (selected manually, not by the gate)
                 self.btn_quality.color = (120, 90, 60)
+        # Task 38 (pl-accessibility): the three accessibility toggle
+        # labels + colors. Each is INDEPENDENT of music (the label reads
+        # its own state field, not music_on / sound_on).
+        self.btn_contrast.label = (
+            f"High contrast: {'ON' if state.high_contrast else 'OFF'}"
+        )
+        self.btn_contrast.color = (
+            (60, 120, 90) if state.high_contrast else (90, 60, 60)
+        )
+        # Text-scale: show the current step label (cycle 0.8-1.6).
+        ts = state.text_scale
+        # Snap to the nearest step label (the stored value may be a
+        # float that's not exactly a step).
+        ts_label = "1.0x"
+        for step in _TEXT_SCALE_STEPS:
+            if abs(ts - step) < 0.01:
+                ts_label = _TEXT_SCALE_LABELS[step]
+                break
+        self.btn_text_scale.label = f"Text scale: {ts_label}"
+        # Color: neutral at 1.0x, warm at the extremes.
+        self.btn_text_scale.color = (70, 90, 120) if abs(ts - 1.0) < 0.01 else (120, 90, 60)
+        self.btn_dyslexia.label = (
+            f"Dyslexia font: {'ON' if state.dyslexia_font else 'OFF'}"
+        )
+        self.btn_dyslexia.color = (
+            (60, 120, 90) if state.dyslexia_font else (90, 60, 60)
+        )
         if self.reset_confirm > 0:
             self.reset_confirm -= dt
             if self.reset_confirm <= 0:
@@ -197,14 +275,15 @@ class SettingsScreen:
         draw_text_center(surf, "Tune the experience.",
                          (cfg.WINDOW_W // 2, 100), font_sm(), C.text_dim)
         # The panel is taller now (it holds the music toggle + the volume
-        # slider + the existing toggles). The buttons are laid out below.
-        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 430)
+        # slider + the existing toggles + the 3 accessibility toggles).
+        # Buttons are laid out below.
+        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 520)
         draw_panel(surf, r, fill=C.panel, border=C.panel_border)
         draw_text(surf, "Accessibility", (r.x + 20, r.y + 16), font_md(bold=True), C.text)
         draw_text(surf, "Reduced motion disables shake & heavy particles.",
                   (r.x + 20, r.y + 40), font_xs(), C.text_dim)
         draw_text(surf, "Render quality caps particles & glow (Low = 60fps floor).",
-                  (r.x + 20, r.y + 430 - 26), font_xs(), C.text_dim)
+                  (r.x + 20, r.y + 520 - 26), font_xs(), C.text_dim)
         for b in self.buttons:
             b.draw(surf)
         # Task 37 (pl-music-sfx): the volume slider. A horizontal slider
@@ -226,4 +305,4 @@ class SettingsScreen:
         pygame.draw.circle(surf, C.text, (hx, sr.centery), 7)
         pygame.draw.circle(surf, C.panel_border, (hx, sr.centery), 7, 1)
         draw_text_center(surf, f"Save: {SAVE_FILE}",
-                         (cfg.WINDOW_W // 2, cfg.WINDOW_H - 110), font_xs(), C.text_muted)
+                         (cfg.WINDOW_W // 2, cfg.WINDOW_H - 60), font_xs(), C.text_muted)

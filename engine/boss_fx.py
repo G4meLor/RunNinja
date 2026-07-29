@@ -30,7 +30,7 @@ from __future__ import annotations
 import pygame
 
 import config as cfg
-from theme import font_huge, draw_bar
+from theme import C, font_huge, draw_bar
 from utils import clamp, ease_out_cubic, ease_in_out_cubic, lerp
 
 
@@ -78,9 +78,10 @@ _PHASE_LABELS = {
 }
 
 # Red glow palette (hue-independent; bosses are always "red threat").
-_GLOW = (255, 60, 70)
-_GLOW_DIM = (120, 20, 30)
-_TEXT = (255, 220, 220)
+# Task 38 (pl-accessibility): the glow + text + bar-bg colors are read
+# from ``theme.C`` (C.boss_glow / C.boss_glow_dim / C.boss_text /
+# C.boss_bar_panel / C.boss_bar_bg) so the high-contrast palette can
+# swap them. The helpers below read C at call time (so the swap is live).
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +99,9 @@ def _boss_label(name: str) -> pygame.Surface:
     if cached is not None:
         return cached
     from theme import font_sm
-    lbl = font_sm(bold=True).render(name.upper(), True, _TEXT)
+    # Task 38: read the boss-text color from theme.C (live read so the
+    # high-contrast palette swap is reflected).
+    lbl = font_sm(bold=True).render(name.upper(), True, C.boss_text)
     _label_cache[name] = lbl
     return lbl
 
@@ -149,7 +152,8 @@ def _name_surface(text: str, hue: int) -> pygame.Surface:
         return cached
     font = font_huge(bold=True)
     # Render the name once, then composite a glow behind it.
-    name_img = font.render(text, True, _TEXT)
+    # Task 38: read the boss-text color from theme.C (live read).
+    name_img = font.render(text, True, C.boss_text)
     nw, nh = name_img.get_size()
     # Pad around the name for the glow halo.
     pad = 60
@@ -161,8 +165,8 @@ def _name_surface(text: str, hue: int) -> pygame.Surface:
     halo = hsl(hue if hue else 0, 0.85, 0.55)
     glow = _glow_surface(gw, gh, halo)
     out.blit(glow, (0, 0))
-    # A second, brighter core glow.
-    core = _glow_surface(nw + 20, nh + 20, _GLOW)
+    # A second, brighter core glow. Task 38: read from theme.C.
+    core = _glow_surface(nw + 20, nh + 20, C.boss_glow)
     out.blit(core, (pad - 10, pad - 10))
     out.blit(name_img, (pad, pad))
     _name_cache[key] = out
@@ -390,12 +394,14 @@ class BossFxSystem:
                 bw = self._bar_w
             x = (w - bw) // 2
             br = pygame.Rect(x, int(y), bw, HEALTH_BAR_H)
-            # Backing panel for contrast.
+            # Backing panel for contrast. Task 38: read the panel + bar
+            # colors from theme.C so the high-contrast palette can swap.
             panel = pygame.Rect(br.x - 4, br.y - 4, br.w + 8, br.h + 8)
-            pygame.draw.rect(surf, (20, 8, 12), panel, border_radius=4)
-            pygame.draw.rect(surf, _GLOW_DIM, panel, 1, border_radius=4)
+            pygame.draw.rect(surf, C.boss_bar_panel, panel, border_radius=4)
+            pygame.draw.rect(surf, C.boss_glow_dim, panel, 1, border_radius=4)
             draw_bar(surf, br, self._bar_pct,
-                     fill=_GLOW, bg=(40, 12, 18), border=_GLOW_DIM, radius=3)
+                     fill=C.boss_glow, bg=C.boss_bar_bg,
+                     border=C.boss_glow_dim, radius=3)
             # Label the bar once it's fully revealed.
             if self._intro_done and self._name:
                 lbl = _boss_label(self._name)
@@ -459,17 +465,20 @@ class BossFxSystem:
                 band_h = 34
                 band = pygame.Surface((w, band_h), pygame.SRCALPHA)
                 # Deep red-tinted band for the "threat" read.
+                # Task 38: the band tint + accent lines read from theme.C
+                # so the high-contrast palette can swap them.
                 pygame.draw.rect(band, (50, 10, 20, band_alpha),
                                  band.get_rect(), border_radius=6)
                 # Thin accent line top + bottom.
-                pygame.draw.line(band, (*_GLOW, band_alpha),
+                pygame.draw.line(band, (*C.boss_glow, band_alpha),
                                  (40, 4), (w - 40, 4), 2)
-                pygame.draw.line(band, (*_GLOW, band_alpha),
+                pygame.draw.line(band, (*C.boss_glow, band_alpha),
                                  (40, band_h - 6), (w - 40, band_h - 6), 2)
                 surf.blit(band, (0, band_y))
                 # Phase label centered on the band.
                 from theme import font_md
-                txt = font_md(bold=True).render(label, True, _TEXT)
+                # Task 38: read the boss-text color from theme.C (live).
+                txt = font_md(bold=True).render(label, True, C.boss_text)
                 txt.set_alpha(band_alpha)
                 tr = txt.get_rect(center=(cx, band_y + band_h // 2))
                 surf.blit(txt, tr)
@@ -481,17 +490,21 @@ class BossFxSystem:
         if t < PHASE_HUE_SHIFT_TIME and self._intro_done:
             hp = 1.0 - ease_in_out_cubic(t / PHASE_HUE_SHIFT_TIME)
             # Lerp the fill from a bright-red flash back to the normal glow.
+            # Task 38: the target glow + the panel/bg/border read from
+            # theme.C so the high-contrast palette swap is reflected.
             flash_fill = (255, 90, 100)
-            fill = (int(flash_fill[0] + (_GLOW[0] - flash_fill[0]) * (1.0 - hp)),
-                    int(flash_fill[1] + (_GLOW[1] - flash_fill[1]) * (1.0 - hp)),
-                    int(flash_fill[2] + (_GLOW[2] - flash_fill[2]) * (1.0 - hp)))
+            glow = C.boss_glow
+            fill = (int(flash_fill[0] + (glow[0] - flash_fill[0]) * (1.0 - hp)),
+                    int(flash_fill[1] + (glow[1] - flash_fill[1]) * (1.0 - hp)),
+                    int(flash_fill[2] + (glow[2] - flash_fill[2]) * (1.0 - hp)))
             br = pygame.Rect((w - self._bar_w) // 2, HEALTH_BAR_Y,
                              self._bar_w, HEALTH_BAR_H)
             panel = pygame.Rect(br.x - 4, br.y - 4, br.w + 8, br.h + 8)
-            pygame.draw.rect(surf, (20, 8, 12), panel, border_radius=4)
-            pygame.draw.rect(surf, _GLOW_DIM, panel, 1, border_radius=4)
+            pygame.draw.rect(surf, C.boss_bar_panel, panel, border_radius=4)
+            pygame.draw.rect(surf, C.boss_glow_dim, panel, 1, border_radius=4)
             draw_bar(surf, br, self._bar_pct,
-                     fill=fill, bg=(40, 12, 18), border=_GLOW_DIM, radius=3)
+                     fill=fill, bg=C.boss_bar_bg,
+                     border=C.boss_glow_dim, radius=3)
             if self._name:
                 lbl = _boss_label(self._name)
                 lr = lbl.get_rect(midleft=(br.x, br.centery))

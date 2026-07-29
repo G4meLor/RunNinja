@@ -16,6 +16,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button, currency_pill
+from ui.cb_symbols import rarity_symbol  # Task 38: color-blind-safe symbols
 from ui.tooltip import TooltipManager
 from utils import format_number
 from data import pets as pet_def
@@ -228,12 +229,19 @@ class PetsScreen:
         draw_panel(surf, r, fill=C.panel, border=C.panel_border)
         draw_text(surf, "Pull Odds", (r.x + 10, r.y + 6), font_sm(bold=True), C.text)
         # Each rarity row: color swatch + label + percent.
+        # Task 38 (pl-accessibility): a color-blind-safe symbol is blitted
+        # alongside the color swatch so color-blind players can tell the
+        # rarities apart without relying on hue (the symbol is the
+        # redundant cue; the color stays).
         y = r.y + 28
         for rar in ("common", "rare", "epic", "legendary", "mythic"):
             col = C.rarity.get(rar, C.text)
             rate = rates.get(rar, 0.0)
             # Color swatch.
             pygame.draw.rect(surf, col, (r.x + 10, y + 2, 10, 10), border_radius=2)
+            # Color-blind-safe symbol overlay (a shape per rarity).
+            sym = rarity_symbol(rar, 14)
+            surf.blit(sym, (r.x + 8, y))
             # Label.
             draw_text(surf, rar.capitalize(), (r.x + 26, y), font_xs(), C.text_dim)
             # Percent (right-aligned).
