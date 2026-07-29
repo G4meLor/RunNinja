@@ -161,6 +161,64 @@ def test_skill_tree_persists_through_ascension(pygame_headless):
 
 
 # ---------------------------------------------------------------------------
+# 4b. Respec button on the skill tree screen (the UI wiring)
+# ---------------------------------------------------------------------------
+def test_respec_button_on_skilltree_screen(pygame_headless):
+    """The SkillTreeScreen has a Respec button wired to respec_skill_tree."""
+    import inspect
+    from ui.screen_skilltree import SkillTreeScreen
+    src = inspect.getsource(SkillTreeScreen)
+    # The screen has a respec button + a click handler that calls
+    # asc.respec_skill_tree(state).
+    assert "btn_respec" in src
+    assert "respec_skill_tree" in src
+
+
+def test_respec_button_gated_by_unlocked_nodes(pygame_headless):
+    """The Respec button is disabled when the tree is empty (no respec if
+    the tree is empty)."""
+    import main
+    g = main.Game()
+    screen = g.screens["skilltree"]
+    # With an empty tree, the button is disabled.
+    g.state.skill_tree = set()
+    screen.update(1 / 60)
+    assert screen.btn_respec.enabled is False
+    # With at least 1 unlocked node, the button is enabled.
+    g.state.skill_tree = {"eli_root"}
+    screen.update(1 / 60)
+    assert screen.btn_respec.enabled is True
+
+
+def test_respec_button_shows_refund_amount(pygame_headless):
+    """The Respec button label shows the refund amount (the elixir the
+    player would get back)."""
+    import main
+    g = main.Game()
+    screen = g.screens["skilltree"]
+    g.state.skill_tree = {"eli_root", "elixir_t2"}
+    screen.update(1 / 60)
+    # The label includes the refund amount (the +N elixir format).
+    assert "+" in screen.btn_respec.label
+
+
+def test_respec_button_click_refunds_and_clears(pygame_headless):
+    """Clicking the Respec button refunds the elixir + clears the tree."""
+    import main
+    g = main.Game()
+    screen = g.screens["skilltree"]
+    g.state.elixir = 0
+    g.state.skill_tree = {"eli_root", "elixir_t2"}
+    # Click the respec button.
+    screen._do_respec()
+    # The tree is cleared + the elixir is refunded.
+    assert g.state.skill_tree == set()
+    from data import skill_tree as st
+    expected_refund = st.BY_ID["eli_root"].cost + st.BY_ID["elixir_t2"].cost
+    assert g.state.elixir == expected_refund
+
+
+# ---------------------------------------------------------------------------
 # 5. Elixir-per-Minute readout + recommended-ascend + pacing thresholds
 # ---------------------------------------------------------------------------
 def test_elixir_per_minute(pygame_headless):

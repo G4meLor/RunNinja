@@ -190,8 +190,8 @@ def elixir_per_minute(state: GameState) -> float:
     the current ``lifetime_gold`` + ``ascend_tier``). The readout is the
     elixir-per-ascension divided by the estimated minutes-to-ascend (the
     time it would take to reach the ascension requirement at the current
-    zone rate). This is a PACING readout -- it tells the player how fast
-    they're earning elixir, not a hard number.
+    gold-earning rate). This is a PACING readout -- it tells the player
+    how fast they're earning elixir, not a hard number.
 
     The estimate is conservative: it assumes the player keeps earning at
     the current ``active_per_sec`` rate (the same rate ``core.offline``
@@ -200,7 +200,9 @@ def elixir_per_minute(state: GameState) -> float:
     ``elixir_gain(state)`` (which already accounts for the diminish factor
     + the elixir_pct stack). The minutes-to-ascend is the remaining
     lifetime_gold the player would earn by the time they reach the
-    requirement, divided by the current gold/sec rate.
+    requirement, divided by the current gold/sec rate -- so the readout
+    reflects the player's actual earning pace, not a fixed "1 min/zone"
+    approximation.
 
     Returns 0.0 when the player can't estimate a rate (no active income,
     or the requirement is already met).
@@ -208,11 +210,15 @@ def elixir_per_minute(state: GameState) -> float:
     if state.lifetime_gold <= 0:
         return 0.0
     req = ascend_requirement(state)
+    # The elixir-per-ascension at the current state (a lower bound on the
+    # future gain -- the player's elixir_pct stack won't decrease, so the
+    # future gain is >= the current gain).
+    elixir_per_asc = float(elixir_gain(state))
     # If the player is already past the requirement, the "per minute" is
     # the elixir-per-ascension (ascend now); we use a 1-minute floor so
     # the readout doesn't divide by zero.
     if state.zone_index >= req:
-        return float(elixir_gain(state))
+        return elixir_per_asc
     # Estimate the gold/sec the player is earning (the active rate, which
     # mirrors the runner's per-tick gold award). This is the same value
     # ``core.offline.active_per_sec`` computes; we import it lazily to
@@ -224,18 +230,23 @@ def elixir_per_minute(state: GameState) -> float:
         gps = 0.0
     if gps <= 0:
         return 0.0
-    # The remaining gold the player would earn by the time they reach the
-    # ascension requirement. This is a rough estimate: the player's
-    # lifetime_gold grows at roughly the current gps; the time to reach
-    # the requirement is the remaining zone progress divided by the zone
-    # rate. We approximate the zone rate as 1 zone per 60s (a conservative
-    # estimate; the actual rate depends on the player's damage + the
-    # zone's HP pool). The elixir-per-ascension at that future point is
-    # the current elixir_gain (a lower bound -- the player's elixir_pct
-    # stack won't decrease, so the future gain is >= the current gain).
+    # The minutes-to-ascend: the remaining gold the player would earn by
+    # the time they reach the requirement, divided by the current gold/sec
+    # rate. The "remaining gold" is the lifetime_gold the player would
+    # have at the requirement -- we approximate by scaling the current
+    # lifetime_gold by the remaining zone fraction (the player earns
+    # roughly proportional gold per zone). This is a conservative
+    # estimate (the actual rate depends on the player's damage + the
+    # zone's HP pool); the 1-minute floor keeps the readout sane.
     zones_remaining = max(1, req - state.zone_index)
-    minutes_to_ascend = max(1.0, zones_remaining * 1.0)  # ~1 min/zone
-    elixir_per_asc = float(elixir_gain(state))
+    # The gold-per-zone the player is currently earning (approximately).
+    # Use the current lifetime_gold / max(1, zone_index) as the per-zone
+    # estimate, then multiply by the zones remaining to get the remaining
+    # gold. The minutes-to-ascend is the remaining gold / gps / 60.
+    gold_per_zone = state.lifetime_gold / max(1, state.zone_index)
+    remaining_gold = gold_per_zone * zones_remaining
+    seconds_to_ascend = remaining_gold / gps
+    minutes_to_ascend = max(1.0, seconds_to_ascend / 60.0)
     return elixir_per_asc / minutes_to_ascend
 
 

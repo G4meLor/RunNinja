@@ -1,4 +1,12 @@
-"""Skill-tree screen (elixir): the permanent tree across 7 branches."""
+"""Skill-tree screen (elixir): the permanent tree across 7 branches.
+
+Task 27 / pl-juice-polish: a "Respec" button that calls
+``core.ascend.respec_skill_tree(state)`` -- a FREE refund of all elixir
+spent on the tree + a clear, so the player can re-spend on a different
+build. The button is visible when the player has at least 1 unlocked
+node (no respec if the tree is empty); on click, it refunds the total
+cost of unlocked nodes, saves, and refreshes the screen.
+"""
 from __future__ import annotations
 
 import pygame
@@ -9,6 +17,7 @@ from ui.widgets import Button, currency_pill
 from utils import format_number
 from data import skill_tree as st
 from core import skill_unlock
+from core import ascend as asc
 
 
 class SkillTreeScreen:
@@ -16,9 +25,48 @@ class SkillTreeScreen:
         self.game = game
         self.btn_back = Button((16, cfg.WINDOW_H - 60, 120, 44), "Back",
                                on_click=lambda: self.game.set_screen("game"))
-        self.buttons = [self.btn_back]
+        # Task 27: the "Respec" button. Calls ``asc.respec_skill_tree(state)``
+        # on click, which refunds all elixir spent on the tree + clears it
+        # (a free, manual respec). The button is enabled only when the
+        # player has at least 1 unlocked node (no respec if the tree is
+        # empty). The label shows the refund amount so the player can see
+        # how much elixir they'd get back before clicking.
+        self.btn_respec = Button(
+            (cfg.WINDOW_W - 200, cfg.WINDOW_H - 60, 180, 44),
+            "Respec", on_click=self._do_respec, color=(150, 80, 220),
+            hint="Refund all elixir spent on the tree.")
+        self.buttons = [self.btn_back, self.btn_respec]
         self.hover_node = None
         self.node_rects: dict[str, pygame.Rect] = {}
+
+    def _do_respec(self) -> None:
+        """Refund all elixir spent on the skill tree + clear it.
+
+        Calls ``asc.respec_skill_tree(state)`` (a free refund), saves the
+        state, and notifies the player. The button is only enabled when
+        the player has at least 1 unlocked node, so this always refunds
+        > 0 elixir.
+        """
+        state = self.game.state
+        if not state.skill_tree:
+            return
+        refunded = asc.respec_skill_tree(state)
+        if refunded > 0:
+            state.save()
+            # A toast on the game screen so the player sees the refund.
+            self.game.screens["game"].notify(
+                f"Respec: +{format_number(refunded)} elixir refunded.",
+                (120, 220, 200))
+
+    def _respec_refund_amount(self) -> int:
+        """The elixir that would be refunded by a respec right now.
+
+        The sum of the ``cost`` of every unlocked node (the same value the
+        player paid to unlock it). Returns 0 if the tree is empty.
+        """
+        state = self.game.state
+        return sum(st.BY_ID[nid].cost for nid in state.skill_tree
+                  if nid in st.BY_ID)
 
     def handle(self, event):
         for b in self.buttons:
@@ -39,6 +87,16 @@ class SkillTreeScreen:
     def update(self, dt):
         for b in self.buttons:
             b.update(dt)
+        # Task 27: enable the respec button only when the player has at
+        # least 1 unlocked node (no respec if the tree is empty). The
+        # label shows the refund amount so the player can see how much
+        # elixir they'd get back before clicking.
+        refund = self._respec_refund_amount()
+        self.btn_respec.enabled = refund > 0
+        if refund > 0:
+            self.btn_respec.label = f"Respec (+{format_number(refund)})"
+        else:
+            self.btn_respec.label = "Respec"
 
     def draw(self, surf):
         state = self.game.state
