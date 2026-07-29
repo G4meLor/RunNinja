@@ -141,7 +141,7 @@ class GameScreen:
         # gate (``can_enter_dungeon``) is a threshold check; the button
         # is disabled when the player does not meet the gate.
         self.btn_dungeon = Button(
-            (cfg.WINDOW_W - 232, cfg.WINDOW_H - 60, 100, 44),
+            (cfg.WINDOW_W - 292, cfg.WINDOW_H - 60, 100, 44),
             "Dungeon", on_click=self._open_dungeon_selector,
             color=(140, 60, 180),
         )
@@ -221,13 +221,29 @@ class GameScreen:
         (built once); they're enabled only when the player meets the
         dungeon entry gate (``can_enter_dungeon``) — the gate is checked
         in ``update`` each tick.
+
+        Layout: the modal panel is centered at (cx, cy) with size
+        (pw, ph) = (360, 320) (see ``_draw_dungeon_selector``). The
+        three variant buttons (bh=44, gap=8) are stacked vertically
+        starting at the panel's title area; the Close button sits at the
+        bottom of the panel. All buttons are inside the panel frame
+        (no overlap with the panel border, no overlap with each other).
         """
         from engine.runner import can_enter_dungeon, daily_dungeon_seed
-        # The selector is a 3-row modal; the buttons are stacked
-        # vertically in the centre of the screen.
         cx = cfg.WINDOW_W // 2
         cy = cfg.WINDOW_H // 2
         bw, bh = 220, 44
+        # The modal panel size (must match ``_draw_dungeon_selector``).
+        pw, ph = 360, 320
+        panel_top = cy - ph // 2          # 200
+        panel_bottom = cy + ph // 2       # 520
+        # The title + subtitle take the top ~70px of the panel; the
+        # variant buttons start below the subtitle. The three buttons
+        # (bh=44) + 2 gaps (8) = 148px; the Close button (36) + a 12px
+        # gap = 48px. Total content: 70 (title) + 148 (variants) + 48
+        # (close) = 266px, which fits inside the 320px panel with
+        # ~27px of padding top/bottom.
+        variants_start = panel_top + 80   # 280
         variants = [
             ("Story", "story",
              "A fixed 5-floor dungeon. Easier, a narrative progression."),
@@ -237,21 +253,28 @@ class GameScreen:
              "A shared daily challenge. 5 floors, same for everyone today."),
         ]
         self.dungeon_variant_buttons = []
-        # A "Close" button to dismiss the selector without entering.
-        btn_close = Button(
-            (cx - 60, cy + 4 * (bh + 8) + 8, 120, 36),
-            "Close", on_click=self._close_dungeon_selector,
-            color=(80, 80, 100),
-        )
-        self.dungeon_variant_buttons.append(btn_close)
+        # The three variant buttons, stacked vertically with an 8px gap.
         for i, (label, vtype, hint) in enumerate(variants):
-            y = cy - (len(variants) // 2) * (bh + 8) + i * (bh + 8)
+            y = variants_start + i * (bh + 8)
             btn = Button(
                 (cx - bw // 2, y, bw, bh),
                 label, on_click=lambda v=vtype: self._enter_dungeon(v),
                 color=(140, 60, 180), hint=hint,
             )
             self.dungeon_variant_buttons.append(btn)
+        # The Close button at the bottom of the panel (inside the frame,
+        # below the variant buttons with a 12px gap). The variant buttons
+        # end at variants_start + 3*(bh+8) - 8 = 280 + 148 - 8 = 420;
+        # the Close button starts at 420 + 12 = 432, ends at 432 + 36 =
+        # 468, which is inside the panel (panel_bottom = 520) with a
+        # ~52px bottom margin.
+        btn_close = Button(
+            (cx - 60, variants_start + len(variants) * (bh + 8) - 8 + 12,
+             120, 36),
+            "Close", on_click=self._close_dungeon_selector,
+            color=(80, 80, 100),
+        )
+        self.dungeon_variant_buttons.append(btn_close)
         # Keep the variant list for reference (the UI layer can read it).
         self._dungeon_variants = [v for _l, v, _h in variants]
 
@@ -1026,10 +1049,12 @@ class GameScreen:
         dim = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
         dim.fill((0, 0, 0, 120))
         surf.blit(dim, (0, 0))
-        # The modal panel (a frame around the variant buttons).
+        # The modal panel (a frame around the variant buttons). The panel
+        # size MUST match the layout in ``_build_dungeon_variant_buttons``
+        # so the buttons sit inside the frame.
         cx = cfg.WINDOW_W // 2
         cy = cfg.WINDOW_H // 2
-        pw, ph = 360, 280
+        pw, ph = 360, 320
         panel = pygame.Rect(0, 0, pw, ph)
         panel.center = (cx, cy)
         draw_panel(surf, panel, fill=(22, 18, 36),

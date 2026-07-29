@@ -120,6 +120,10 @@ _SCHEMA: dict[str, type] = {
     "dungeon_type": str,
     "dungeon_floor": int,
     "dungeon_seed": int,
+    # cnt-shadow-dungeon-variants (Task 34): the best dungeon floor
+    # reached (a record-keeping field). Type-checked here so a corrupted
+    # value in a save file is flagged by the validator.
+    "dungeon_best_floor": int,
     "cosmic_forge": int,
     # cnt-quest-codex (Task 26): weekly + chapter quest state.
     "weekly_quests": list,
