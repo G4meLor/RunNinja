@@ -14,6 +14,18 @@ Task 27 / pl-juice-polish additions:
     "elixir per ascension" projection. The Tome is the SINGLE compounding
     elixir-growth loop (the unspent-elixir-as-multiplier is NOT
     implemented).
+
+Task 35 (gp-reincarnation-perks) additions:
+  * **Reincarnation panel**: a Reincarnation button + Soul Tree panel,
+    gated behind Singularity (tier 6) + 10 ascensions. Reincarnation is
+    the HARD reset above ascension (resets ascend_tier + elixir +
+    skill_tree); the Soul Tree perks (permanent, in ``state.soul_tree``)
+    persist and modify how the new run starts. The Cosmic Forge (max 10)
+    is the persistent anchor -- it survives reincarnation.
+  * **Soul Tree panel**: the 4 perks (start_zone_3, extra_equip_slot,
+    keep_skill_tree, fifth_active_skill), their soul cost, and whether
+    they're unlocked. Clicking a perk purchases it (spends souls, adds
+    to ``state.soul_tree``). The perks are permanent run-breaking verbs.
 """
 from __future__ import annotations
 
@@ -36,6 +48,23 @@ class AscendScreen:
         self.buttons = [self.btn_ascend, self.btn_back]
         self.confirm_pending = False
         self.confirm_t = 0.0
+        # Task 35: Reincarnation button (gated behind Singularity + 10
+        # ascensions). The button is enabled only when the gate is met;
+        # it confirms like the Ascend button (a two-click confirm so the
+        # hard reset is not a misclick).
+        self.btn_reincarnate = Button(
+            (cfg.WINDOW_W - 280, cfg.WINDOW_H - 100, 240, 60),
+            "Reincarnate", on_click=self._do_reincarnate,
+            color=(180, 120, 255))
+        self.buttons.append(self.btn_reincarnate)
+        self.reincarnate_pending = False
+        self.reincarnate_t = 0.0
+        # Task 35: Soul Tree perk buttons (cached like the forge buttons
+        # in screen_hero -- the MOUSEBUTTONDOWN + MOUSEBUTTONUP pair must
+        # hit the same Button object so ``on_click`` fires). Rebuilt
+        # when the soul/soul_tree state changes.
+        self._soul_btns: list[Button] = []
+        self._soul_btn_state: tuple | None = None
 
     def _do_ascend(self):
         state = self.game.state
@@ -52,8 +81,86 @@ class AscendScreen:
             self.confirm_pending = True
             self.confirm_t = 3.0
 
+    def _do_reincarnate(self):
+        """Reincarnation confirm: a two-click confirm like Ascend.
+
+        The first click arms the confirm (the label flips to "Confirm
+        Reincarnate?" + a 3s window); the second click within the window
+        performs the hard reset. The reset is gated by ``can_reincarnate``
+        (Singularity + 10 ascensions); the button is disabled when the
+        gate is not met, so this only fires when the player is eligible.
+        """
+        state = self.game.state
+        if self.reincarnate_pending:
+            if asc.reincarnate(state):
+                self.game.runner.reset_for_ascension()
+                self.game.shake(14, 0.8)
+                from assets import play
+                play("ascend", state.sound_on)
+                self.game.state.save()
+            self.reincarnate_pending = False
+        else:
+            self.reincarnate_pending = True
+            self.reincarnate_t = 3.0
+
+    def _do_purchase_perk(self, perk_id: str) -> None:
+        """Purchase a Soul Tree perk (spends souls, adds to soul_tree)."""
+        state = self.game.state
+        if asc.purchase_soul_tree_perk(state, perk_id):
+            from assets import play
+            play("gacha", state.sound_on)
+            state.save()
+
+    def _soul_btn_snapshot(self, state) -> tuple:
+        """A hashable snapshot of the state that affects the perk buttons."""
+        return (tuple(sorted(state.soul_tree)), state.souls)
+
+    def _maybe_rebuild_soul_buttons(self) -> None:
+        """Rebuild the Soul Tree perk buttons when the state changes.
+
+        The buttons are cached so the MOUSEBUTTONDOWN + MOUSEBUTTONUP
+        pair hits the same Button object (same pattern as the forge
+        buttons in screen_hero). Rebuilt when the soul_tree set or the
+        souls balance changes.
+        """
+        state = self.game.state
+        snap = self._soul_btn_snapshot(state)
+        if snap == self._soul_btn_state:
+            return
+        self._soul_btn_state = snap
+        self._soul_btns = []
+        from data.skill_tree import SOUL_TREE_PERKS
+        for i, perk in enumerate(SOUL_TREE_PERKS):
+            unlocked = perk.id in state.soul_tree
+            can = (not unlocked) and state.souls >= perk.cost
+            # The button label shows the perk name + cost (or "Unlocked").
+            if unlocked:
+                label = f"{perk.name} - Unlocked"
+                enabled = False
+            elif can:
+                label = f"{perk.name} ({perk.cost} souls)"
+                enabled = True
+            else:
+                label = f"{perk.name} ({perk.cost} souls)"
+                enabled = False
+            # Layout: a 2x2 grid in the Soul Tree panel area. The panel
+            # is at x=640, y=130, w=620, h=530. The grid starts at
+            # y=270 (below the "Soul Tree" header). Each button is 280x48;
+            # the grid is 2 columns x 2 rows.
+            col = i % 2
+            row = i // 2
+            bx = 660 + col * 290
+            by = 270 + row * 56
+            btn = Button((bx, by, 280, 48), label,
+                         on_click=lambda pid=perk.id: self._do_purchase_perk(pid),
+                         enabled=enabled, color=(180, 120, 255))
+            self._soul_btns.append(btn)
+
     def handle(self, event):
         for b in self.buttons:
+            b.handle(event)
+        # Soul Tree perk buttons (cached; rebuilt in update/draw).
+        for b in self._soul_btns:
             b.handle(event)
 
     def update(self, dt):
@@ -68,7 +175,23 @@ class AscendScreen:
         else:
             self.btn_ascend.label = "Ascend"
             self.btn_ascend.color = (150, 80, 220)
+        # Task 35: Reincarnation button state (gated + confirm).
+        can_reinc = asc.can_reincarnate(state)
+        self.btn_reincarnate.enabled = can_reinc
+        if self.reincarnate_pending:
+            self.reincarnate_t -= dt
+            if self.reincarnate_t <= 0:
+                self.reincarnate_pending = False
+            self.btn_reincarnate.label = "Confirm Reincarnate?"
+            self.btn_reincarnate.color = (220, 80, 80)
+        else:
+            self.btn_reincarnate.label = "Reincarnate"
+            self.btn_reincarnate.color = (180, 120, 255)
+        # Rebuild the Soul Tree perk buttons if the state changed.
+        self._maybe_rebuild_soul_buttons()
         for b in self.buttons:
+            b.update(dt)
+        for b in self._soul_btns:
             b.update(dt)
 
     def draw(self, surf):
@@ -156,6 +279,85 @@ class AscendScreen:
         bar = pygame.Rect(rr.x + 16, rr.y + 38, rr.w - 32, 12)
         draw_bar(surf, bar, asc.ascend_progress(state),
                  fill=(150, 80, 220), bg=C.mp_bg, border=C.panel_border)
+
+        # -----------------------------------------------------------------
+        # Task 35 (gp-reincarnation-perks): Reincarnation + Soul Tree panel
+        # -----------------------------------------------------------------
+        # A Reincarnation panel + Soul Tree, gated behind Singularity (tier
+        # 6) + 10 ascensions. The panel shows the Cosmic Forge count
+        # (current/max 10), the Souls balance, the Reincarnation button,
+        # and the 4 Soul Tree perks (with their soul cost + unlocked
+        # state). The panel is always shown (so the player can see the
+        # gate); the Reincarnation button is disabled when the gate is not
+        # met. The perks are clickable when the player can afford them.
+        # The panel is on the right side of the screen (x = 620) so it
+        # doesn't overlap the ascend panels (which are centered at
+        # WINDOW_W // 2 - 240, width 480 -> right edge at 760; the Soul
+        # Tree panel starts at x = 620 to overlap minimally -- the ascend
+        # panels end at y = 530, the Soul Tree panel starts at y = 130,
+        # so the two are side-by-side, not overlapping vertically).
+        soul_panel = pygame.Rect(640, 130, 620, 530)
+        draw_panel(surf, soul_panel, fill=(30, 20, 50), border=(180, 120, 255),
+                  border_w=2)
+        draw_text(surf, "Reincarnation",
+                  (soul_panel.x + 16, soul_panel.y + 10),
+                  font_lg(bold=True), (180, 120, 255))
+        draw_text(surf,
+                  "Hard reset for Souls + Soul Tree perks (permanent).",
+                  (soul_panel.x + 16, soul_panel.y + 44),
+                  font_xs(), C.text_dim)
+        # Cosmic Forge count (the persistent anchor, max 10).
+        forge_y = soul_panel.y + 72
+        draw_text(surf, f"Cosmic Forge: {state.cosmic_forge}/10",
+                  (soul_panel.x + 16, forge_y), font_md(bold=True),
+                  C.gold)
+        forge_bar = pygame.Rect(soul_panel.x + 16, forge_y + 22, 200, 12)
+        draw_bar(surf, forge_bar, state.cosmic_forge / 10.0,
+                 fill=C.gold, bg=C.mp_bg, border=C.panel_border)
+        # Souls balance (the reincarnation currency).
+        draw_text(surf, f"Souls: {state.souls}",
+                  (soul_panel.x + 240, forge_y), font_md(bold=True),
+                  C.soul)
+        # Reincarnation gate status (what's missing).
+        gate_y = soul_panel.y + 110
+        can_reinc = asc.can_reincarnate(state)
+        if can_reinc:
+            draw_text(surf, "Gate: Singularity + 10 ascensions - READY",
+                      (soul_panel.x + 16, gate_y), font_sm(bold=True),
+                      C.text_good)
+        else:
+            tier_name = cfg.ASCEND_TIERS[
+                min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)][0]
+            need_tier = max(0, asc.SINGULARITY_TIER - state.ascend_tier)
+            need_asc = max(0, asc.REINCARNATION_ASCENSION_GATE
+                           - state.total_ascensions)
+            draw_text(surf,
+                      f"Gate: need Singularity ({tier_name}, +{need_tier} tier)"
+                      f" + {need_asc} more ascensions",
+                      (soul_panel.x + 16, gate_y), font_sm(), C.text_warn)
+        # Soul Tree perks (the 4 run-breaking verbs).
+        tree_y = soul_panel.y + 140
+        draw_text(surf, "Soul Tree",
+                  (soul_panel.x + 16, tree_y), font_md(bold=True),
+                  (180, 120, 255))
+        draw_text(surf,
+                  "Each perk is a run-breaking verb (permanent).",
+                  (soul_panel.x + 16, tree_y + 22), font_xs(),
+                  C.text_dim)
+        # The perk buttons are cached on ``self._soul_btns`` (built in
+        # ``_maybe_rebuild_soul_buttons``); draw them after the panel
+        # chrome so they align with the rows.
+        for b in self._soul_btns:
+            b.draw(surf)
+        # Perk descriptions (below the buttons).
+        from data.skill_tree import SOUL_TREE_PERKS
+        desc_y = soul_panel.y + 240
+        for i, perk in enumerate(SOUL_TREE_PERKS):
+            unlocked = perk.id in state.soul_tree
+            color = C.text_good if unlocked else C.text_dim
+            draw_text(surf, f"{perk.name}: {perk.desc}",
+                      (soul_panel.x + 16, desc_y + i * 22),
+                      font_xs(), color)
 
         for b in self.buttons:
             b.draw(surf)

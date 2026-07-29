@@ -260,6 +260,12 @@ class Runner:
         here (the base ``SKILL_DEFS`` cooldown * the multiplier) so the
         reduction applies as long as the skill is unlocked. The upgrade
         resets on ascension.
+
+        Task 35 (gp-reincarnation-perks): the ``fifth_active_skill`` Soul
+        Tree perk adds a 5th active skill (``shadow_step``) to the active
+        set. The perk is permanent (in ``state.soul_tree``); the skill is
+        added when the perk is active, on top of the 4 base skills. The
+        5th skill has its own cooldown (50s, in line with the others).
         """
         self.skills.clear()
         cd_mult = self.skill_cooldown_mult()
@@ -272,6 +278,14 @@ class Runner:
                 sk = make_skill(sid)
                 sk.cooldown = sk.cooldown * cd_mult
                 self.skills[sid] = sk
+        # Task 35: the 5th active skill (shadow_step), unlocked by the
+        # ``fifth_active_skill`` Soul Tree perk. The perk is permanent
+        # (in ``state.soul_tree``); the skill is added when the perk is
+        # active, on top of the 4 base skills.
+        if "fifth_active_skill" in self.state.soul_tree:
+            sk = make_skill("shadow_step")
+            sk.cooldown = sk.cooldown * cd_mult
+            self.skills["shadow_step"] = sk
 
     # -----------------------------------------------------------------
     # Task 29 (gfx-parallax): scroll accumulator speed
@@ -1208,6 +1222,27 @@ class Runner:
             self.state.energy_active = True
             self.state.energy = max(self.state.energy, 8.0)
             self.notify("Speed Step!", (255, 240, 120))
+        elif sid == "shadow_step":
+            # Task 35: Shadow Step -- a blink-burst to the nearest enemy
+            # for a heavy single-target nuke. The 5th active skill,
+            # unlocked by the ``fifth_active_skill`` Soul Tree perk. A
+            # ninja-themed teleport: a heavy single-target hit (5x tap
+            # damage, crit) to the nearest alive enemy. The damage is a
+            # flat multiple of tap_damage (NOT multiplicative with
+            # combo_mult -- same philosophy as the other skills), so the
+            # skill is a meaningful burst but not a combo-scaled nuke.
+            targets = sorted([e for e in self.world.enemies if e.alive],
+                              key=lambda e: abs(e.x - self.ninja.x))
+            if targets:
+                t = targets[0]
+                from engine.enemy import _apply_damage
+                dmg = self.ninja.tap_damage * 5 * combo_m * skill_m
+                _apply_damage(t, dmg, is_crit=True,
+                              attuned=self.state.attuned_element)
+                if not t.alive:
+                    self._on_enemy_killed(t, combo_m, gold_m,
+                                          aggregate_bonuses(self.state))
+            self.notify("Shadow Step!", (180, 120, 255))
         # Skill Synergies (Task 25): check whether the previous skill
         # fired within the 2s window matches a synergy pair. The synergy
         # is a sequencing puzzle -- the player fires two skills in a
@@ -1669,6 +1704,11 @@ class DungeonRunner:
                 sk = make_skill(sid)
                 sk.cooldown = sk.cooldown * cd_mult
                 self.skills[sid] = sk
+        # Task 35: the 5th active skill (shadow_step) in the dungeon too.
+        if "fifth_active_skill" in self.state.soul_tree:
+            sk = make_skill("shadow_step")
+            sk.cooldown = sk.cooldown * cd_mult
+            self.skills["shadow_step"] = sk
 
     # -----------------------------------------------------------------
     # Floor stat scaling (the dungeon deepens as the player descends)
@@ -2089,3 +2129,15 @@ class DungeonRunner:
         elif sid == "speed":
             self.state.energy_active = True
             self.state.energy = max(self.state.energy, 8.0)
+        elif sid == "shadow_step":
+            # Task 35: Shadow Step in the dungeon (same logic as the road).
+            targets = sorted([e for e in self.world.enemies if e.alive],
+                              key=lambda e: abs(e.x - self.ninja.x))
+            if targets:
+                t = targets[0]
+                dmg = self.ninja.tap_damage * 5 * combo_m * skill_m
+                _apply_damage(t, dmg, is_crit=True,
+                              attuned=self.state.attuned_element)
+                if not t.alive:
+                    self._on_enemy_killed(t, combo_m, gold_m,
+                                          aggregate_bonuses(self.state))

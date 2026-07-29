@@ -172,12 +172,152 @@ def ascend(state: GameState) -> int:
         state.heritage.add("earth")
     else:
         state.heritage.add(state.dojo)
+    # Souls: award the tier's soul reward (the reincarnation currency).
+    # ``soul_reward_on_ascend`` is the 4th column in ``cfg.ASCEND_TIERS``.
+    # The soul reward is the currency the player spends on Soul Tree perks
+    # (the permanent run-breaking verbs in ``data.skill_tree``). The
+    # ``soul_pct`` bonus (from the Soul Harvest evolution node) scales the
+    # reward up. Souls persist through ascension (they are NOT reset here
+    # -- only reincarnation resets souls, and even there the spent-perk
+    # state in ``state.soul_tree`` survives).
+    tier_idx = min(state.ascend_tier, len(cfg.ASCEND_TIERS) - 1)
+    soul_reward = cfg.ASCEND_TIERS[tier_idx][3]
+    soul_mult = 1.0 + evo.get("soul_pct", 0.0)
+    state.souls += int(soul_reward * soul_mult)
     return gained
 
 
 def ascend_progress(state: GameState) -> float:
     req = ascend_requirement(state)
     return min(1.0, state.zone_index / req) if req > 0 else 1.0
+
+
+# ---------------------------------------------------------------------------
+# Task 35 (gp-reincarnation-perks): Reincarnation + Soul Tree perks
+# ---------------------------------------------------------------------------
+# Reincarnation is the HARD reset above ascension. Ascension (above) is the
+# soft reset (resets run state, keeps buildings, increments tier, grants
+# elixir + souls). Reincarnation resets ascend_tier + elixir + skill_tree
+# too -- the full rebuild -- but the Soul Tree perks (``state.soul_tree``)
+# persist and modify how the new run starts. The Cosmic Forge
+# (``state.cosmic_forge``, max 10) is the persistent anchor -- it survives
+# reincarnation (it IS the anchor), incremented once per reincarnation,
+# clamped at 10.
+#
+# The gate is Singularity (tier 6, the top of ``cfg.ASCEND_TIERS``) + 10
+# ascensions (``state.total_ascensions >= 10``). The gate ensures the
+# player has mastered the base loop before the hard reset is offered.
+SINGULARITY_TIER = 6  # the top of cfg.ASCEND_TIERS (index 6 = "Singularity")
+REINCARNATION_ASCENSION_GATE = 10  # min total ascensions to reincarnate
+
+
+def can_reincarnate(state: GameState) -> bool:
+    """Whether the player can reincarnate (the hard reset gate).
+
+    True when:
+    1. ``state.ascend_tier >= SINGULARITY_TIER`` (the player has reached
+       Singularity, the top of the 7-tier ladder), AND
+    2. ``state.total_ascensions >= REINCARNATION_ASCENSION_GATE`` (the
+       player has ascended at least 10 times).
+
+    Both gates must hold. The gate ensures the player has mastered the
+    base loop before the hard reset is offered -- the Soul Tree perks are
+    a reward for the deep investment, not a first-purchase rush.
+    """
+    return (state.ascend_tier >= SINGULARITY_TIER
+            and state.total_ascensions >= REINCARNATION_ASCENSION_GATE)
+
+
+def reincarnate(state: GameState) -> bool:
+    """Perform reincarnation (the hard reset); returns True if done.
+
+    Reincarnation is the HARD reset above ascension:
+      * Resets run-scoped state (gold, upgrades, zone, combo, energy) --
+        same as ascension.
+      * Resets ascend_tier to 0 (the prestige ladder restarts).
+      * Resets elixir to 0 (the elixir currency is re-ground).
+      * Resets skill_tree to empty (the elixir skill tree is re-ground) --
+        UNLESS the ``keep_skill_tree`` perk is active, in which case 25%
+        of the unlocked nodes are kept (rounded down).
+      * Does NOT reset ``state.soul_tree`` (the Soul Tree perks are
+        permanent -- they survive ALL resets; the whole point is they
+        persist across the hard reset).
+      * Does NOT reset ``state.souls`` (the perk currency is spent on
+        perks, not re-ground).
+      * Increments ``state.cosmic_forge`` (the persistent anchor, max 10).
+      * Applies the ``start_zone_3`` perk: ``state.zone_index = 2``
+        (0-indexed zone 3) instead of 0.
+
+    Returns False (no-op) when the gate (``can_reincarnate``) is not met.
+    """
+    if not can_reincarnate(state):
+        return False
+    # --- Hard reset: run-scoped state (same as ascension) ---
+    state.gold = 0.0
+    state.upgrades = {}
+    state.zone_index = 0
+    state.zone_distance = 0.0
+    state.combo = 0
+    state.combo_timer = 0.0
+    state.energy = state.energy_max
+    state.energy_active = False
+    # --- Hard reset: prestige layers (ascension does NOT touch these) ---
+    state.ascend_tier = 0
+    state.elixir = 0
+    # keep_skill_tree perk: keep 25% of the unlocked skill-tree nodes
+    # (rounded down). Without the perk, the skill tree is fully reset.
+    if "keep_skill_tree" in state.soul_tree and state.skill_tree:
+        kept_count = len(state.skill_tree) // 4
+        if kept_count > 0:
+            # Keep the first N nodes (deterministic; the player can respec
+            # the elixir tree freely after the reincarnation, so the exact
+            # set kept doesn't matter -- the count is the perk's value).
+            kept = list(state.skill_tree)[:kept_count]
+            state.skill_tree = set(kept)
+        else:
+            state.skill_tree = set()
+    else:
+        state.skill_tree = set()
+    # --- Apply the start_zone_3 perk: start at zone 3 (zone_index = 2) ---
+    if "start_zone_3" in state.soul_tree:
+        state.zone_index = 2
+    # --- The Cosmic Forge: the persistent anchor (max 10) ---
+    # Incremented once per reincarnation, clamped at 10. The Forge is the
+    # anchor that survives the hard reset -- it IS the persistence layer
+    # for the reincarnation count (a record of how many times the player
+    # has rebuilt). The clamp at 10 is the spec's hard cap.
+    state.cosmic_forge = min(10, state.cosmic_forge + 1)
+    # --- NOT reset: soul_tree (permanent perks) + souls (the currency) ---
+    # state.soul_tree and state.souls are NOT touched here -- they persist
+    # across the hard reset (the whole point of the Soul Tree).
+    return True
+
+
+def purchase_soul_tree_perk(state: GameState, perk_id: str) -> bool:
+    """Purchase a Soul Tree perk; returns True if purchased.
+
+    Spends ``state.souls`` (the reincarnation currency) and adds the perk
+    to ``state.soul_tree`` (the permanent perk set). Returns False (no-op)
+    when:
+      * The perk id is not a valid Soul Tree perk.
+      * The perk is already unlocked (in ``state.soul_tree``).
+      * The player has insufficient souls (``state.souls < perk.cost``).
+
+    The perks are permanent -- once purchased, they survive ALL resets
+    (ascension + reincarnation). The purchase is a one-time spend; the
+    perk is never re-ground.
+    """
+    from data.skill_tree import SOUL_TREE_PERKS_BY_ID
+    perk = SOUL_TREE_PERKS_BY_ID.get(perk_id)
+    if perk is None:
+        return False
+    if perk_id in state.soul_tree:
+        return False
+    if state.souls < perk.cost:
+        return False
+    state.souls -= perk.cost
+    state.soul_tree.add(perk_id)
+    return True
 
 
 # ---------------------------------------------------------------------------

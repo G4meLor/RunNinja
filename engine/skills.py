@@ -30,6 +30,15 @@ SKILL_DEFS = {
              "desc": "Instant-kill the weakest enemy, bonus gold."},
     "speed": {"name": "Speed Step", "cooldown": 40.0, "duration": 8.0,
               "desc": "Double attack speed for 8 seconds."},
+    # Task 35 (gp-reincarnation-perks): the 5th active skill, unlocked by
+    # the ``fifth_active_skill`` Soul Tree perk. A ninja-themed blink-burst:
+    # a short cooldown nuke that teleports to the nearest enemy and
+    # delivers a heavy single-target hit. The cooldown (50s) is in line
+    # with the other skills (30-60s). The runner's ``_refresh_skills``
+    # adds this skill to the active set only when the perk is in
+    # ``state.soul_tree``.
+    "shadow_step": {"name": "Shadow Step", "cooldown": 50.0, "duration": 0.0,
+                    "desc": "Blink to the nearest enemy for a heavy single-target nuke."},
 }
 
 

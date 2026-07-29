@@ -319,6 +319,37 @@ def aggregate_bonuses(state: GameState) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Task 35 (gp-reincarnation-perks): effective gear slot count
+# ---------------------------------------------------------------------------
+# The ``extra_equip_slot`` Soul Tree perk adds a 5th gear slot ("spirit").
+# The base gear system has 4 slots (``cfg.GEAR_SLOTS``); the perk makes the
+# effective slot count 5 when the perk is in ``state.soul_tree``. The 5th
+# slot is a new slot ("spirit"), not a duplicate -- the gear provider reads
+# ``state.gear[slot]`` for each slot in the effective set, so a piece in
+# the "spirit" slot contributes its affix to the flat bonus dict the same
+# way the other 4 slots do.
+#
+# The ``spirit`` slot's affix pool is in ``cfg.GEAR_AFFIXES`` (added by
+# this task). The slot is themed as the utility/hybrid slot (energy +
+# defense + crit chance), complementing the 4 base slots.
+_GEAR_SLOT_BASE_COUNT = 4
+_GEAR_SLOT_EXTRA = "spirit"
+
+
+def effective_gear_slots(state: GameState) -> tuple[str, ...]:
+    """The effective gear slot set for the current state.
+
+    Returns the base 4 slots (``cfg.GEAR_SLOTS``) plus the 5th ``spirit``
+    slot when the ``extra_equip_slot`` Soul Tree perk is active. Without
+    the perk, returns the base 4 slots.
+    """
+    base = cfg.GEAR_SLOTS
+    if "extra_equip_slot" in state.soul_tree:
+        return base + (_GEAR_SLOT_EXTRA,)
+    return base
+
+
+# ---------------------------------------------------------------------------
 # Gear Forge (cnt-gear-loot-forge, Task 33)
 # ---------------------------------------------------------------------------
 # The MANAGEMENT half of the gear split (the model is Task 20). The Forge is

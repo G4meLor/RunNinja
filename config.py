@@ -164,6 +164,19 @@ GEAR_AFFIXES: dict[str, tuple[tuple[str, float], ...]] = {
         ("def_pct", 0.05),        # +5% defense (common)
         ("energy_regen", 0.05),   # +5% energy regen (common, utility)
     ),
+    # Task 35 (gp-reincarnation-perks): the 5th slot, unlocked by the
+    # ``extra_equip_slot`` Soul Tree perk. The "spirit" slot is the
+    # utility/hybrid slot (energy regen + crit chance + speed), complementing
+    # the 4 base slots. The affix keys are the same keys the engine already
+    # reads in ``aggregate_bonuses``, so a piece in the spirit slot
+    # contributes its affix to the flat bonus dict the same way the other 4
+    # slots do. The ``effective_gear_slots(state)`` function in
+    # ``core.bonuses`` returns this slot only when the perk is active.
+    "spirit": (
+        ("energy_regen", 0.06),   # +6% energy regen (common, utility)
+        ("crit_pct", 0.02),       # +2% crit chance (common, hybrid)
+        ("speed_pct", 0.04),      # +4% attack speed (common, hybrid)
+    ),
 }
 
 # Rarity multiplier on the base affix value. Reuses the GACHA_RATES rarity

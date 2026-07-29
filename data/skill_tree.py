@@ -343,6 +343,54 @@ EPIC_RESEARCH_NODES: list[SkillNode] = _build_epic_research()
 EPIC_RESEARCH_BY_ID: dict[str, SkillNode] = {n.id: n for n in EPIC_RESEARCH_NODES}
 
 
+# ---------------------------------------------------------------------------
+# Soul Tree perks (Task 35 / gp-reincarnation-perks)
+# ---------------------------------------------------------------------------
+# Named, concrete perks bought with Souls (the reincarnation currency). Each
+# is a RUN-BREAKING VERB -- it changes how a new run starts after
+# reincarnation, not a passive stat buff. The perks are permanent (they
+# live in ``state.soul_tree``, which is NOT reset on reincarnation -- the
+# whole point is they persist across the hard reset).
+#
+# The 4 perks:
+#   * ``start_zone_3``      -- start each reincarnation at zone 3 (skip).
+#   * ``extra_equip_slot`` -- +1 gear equip slot (5 slots instead of 4).
+#   * ``keep_skill_tree``  -- keep 25% of skill-tree nodes on reincarnation.
+#   * ``fifth_active_skill``-- unlock a 5th active skill (shadow_step).
+#
+# Costs are in Souls (the reincarnation currency, awarded on ascension via
+# ``soul_reward_on_ascend`` in ``config.ASCEND_TIERS``). Tuned so a player
+# who has reached the reincarnation gate (Singularity + 10 ascensions) can
+# afford the first perk after a few more ascensions, not a first-purchase
+# rush.
+@dataclass
+class SoulTreePerk:
+    id: str
+    name: str
+    cost: int            # soul cost
+    desc: str
+
+
+_SOUL_TREE_PERK_ROWS = [
+    ("start_zone_3", "Phoenix Road", 200,
+     "Start each reincarnation at zone 3 instead of zone 1."),
+    ("extra_equip_slot", "Spirit Vessel", 300,
+     "+1 gear equip slot (5 slots instead of 4)."),
+    ("keep_skill_tree", "Eternal Memory", 400,
+     "Keep 25% of your skill tree nodes on reincarnation."),
+    ("fifth_active_skill", "Shadow Step", 500,
+     "Unlock a 5th active skill: Shadow Step (a blink-burst)."),
+]
+
+
+def _build_soul_tree_perks() -> list[SoulTreePerk]:
+    return [SoulTreePerk(*row) for row in _SOUL_TREE_PERK_ROWS]
+
+
+SOUL_TREE_PERKS: list[SoulTreePerk] = _build_soul_tree_perks()
+SOUL_TREE_PERKS_BY_ID: dict[str, SoulTreePerk] = {p.id: p for p in SOUL_TREE_PERKS}
+
+
 def all_nodes() -> list[SkillNode]:
     return list(NODES)
 
