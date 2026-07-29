@@ -125,6 +125,11 @@ class GameState:
     dungeon_type: str = "none"         # story, endless, daily (cnt-shadow-dungeon)
     dungeon_floor: int = 0            # current dungeon floor (cnt-shadow-dungeon)
     dungeon_seed: int = 0             # daily dungeon seed (cnt-shadow-dungeon)
+    # Task 34 (cnt-shadow-dungeon-variants): the best floor reached across
+    # all dungeon runs (a record-keeping field). Updated by the
+    # DungeonRunner when a floor is cleared. The variant (story/endless/
+    # daily) is in ``dungeon_type``; this is the depth record.
+    dungeon_best_floor: int = 0       # best dungeon floor reached (cnt-shadow-dungeon-variants)
     music_on: bool = False            # separate from SFX (pl-music-sfx)
     volume: float = 0.5              # master volume slider (pl-music-sfx)
     text_scale: float = 1.0          # 0.8x-1.6x font scale (pl-accessibility)
@@ -300,6 +305,11 @@ def _migrate_v2_to_v3(d: dict) -> dict:
     d.setdefault("dungeon_type", "none")
     d.setdefault("dungeon_floor", 0)
     d.setdefault("dungeon_seed", 0)
+    # cnt-shadow-dungeon-variants (Task 34): the best dungeon floor
+    # reached. Seeded with the same default the dataclass uses so a v2
+    # save loaded under v3+ code has the field the dungeon-variant logic
+    # expects.
+    d.setdefault("dungeon_best_floor", 0)
     # pl-music-sfx
     d.setdefault("music_on", False)
     d.setdefault("volume", 0.5)

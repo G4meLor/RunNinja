@@ -1488,6 +1488,9 @@ DUNGEON_ENEMIES: list = [
 ]
 # The dungeon boss: a fire-themed capstone. The dungeon boss is a fixed
 # EnemyDef (not a zone boss) so the dungeon's theme is self-contained.
+# Kept as the legacy single-boss constant for backward compat with Task
+# 23's tests; the dungeon variants pick from ``DUNGEON_BOSS_POOL`` (in
+# data/enemies.py) via ``dungeon_boss_for_floor``.
 DUNGEON_BOSS = _EnemyDef(
     "d_boss", "Shadow Inferno", "demon", 10, 14.0, 6.0, 16.0, 14, 46,
     rare_drop=0.7, desc="The dungeon's heart of fire.", element="fire")
@@ -1501,6 +1504,56 @@ DUNGEON_DMG_BASE = 8.0
 DUNGEON_DMG_GROWTH = 1.15
 DUNGEON_GOLD_BASE = 20.0
 DUNGEON_GOLD_GROWTH = 1.18
+
+# ---------------------------------------------------------------------------
+# Dungeon variants (Task 34 / cnt-shadow-dungeon-variants)
+# ---------------------------------------------------------------------------
+# Story + Endless + Daily variants with a shared daily seed. The variant
+# affects the dungeon's difficulty/scaling:
+#   Story:   a fixed set of floors (``STORY_FLOORS``), a narrative
+#            progression, easier. The dungeon completes (exits) after the
+#            last floor.
+#   Endless: infinite floors, scaling difficulty. The dungeon never
+#            completes (the player can descend indefinitely).
+#   Daily:   a shared daily seed (deterministic per day), a fixed set of
+#            floors (``DAILY_FLOORS``), a daily challenge. The same daily
+#            seed produces the same sequence of bosses (the daily
+#            challenge is the same for all players on the same day).
+#
+# The ``daily_dungeon_seed()`` function is deterministic per day (the same
+# for all players on the same day). The Daily variant uses it to seed the
+# boss picks so the daily challenge is shared.
+#
+# The Story variant is a fixed set of floors (a finite dungeon with a
+# defined end). The Endless variant is infinite (the dungeon never
+# completes). The Daily variant is a fixed set of floors (same as Story —
+# a finite daily challenge) but uses the daily seed to pick the bosses.
+STORY_FLOORS: int = 5          # the Story variant's floor count
+DAILY_FLOORS: int = 5          # the Daily variant's floor count
+
+
+def daily_dungeon_seed(date=None) -> int:
+    """The daily dungeon seed (deterministic per day).
+
+    The seed is the same for all players on the same day (the daily
+    challenge is shared). The seed is a deterministic hash of the date
+    (year, month, day) — a stable integer that encodes the date so
+    different days produce different seeds and the same day produces the
+    same seed. The seed is used by the Daily variant to deterministically
+    pick the boss for each floor (see ``dungeon_boss_for_floor``).
+
+    The ``date`` argument is a ``datetime.date`` (defaults to today). The
+    seed is an integer (stored in ``state.dungeon_seed``, an int field).
+    """
+    import datetime
+    if date is None:
+        date = datetime.date.today()
+    # A deterministic hash of the date: a stable integer that encodes
+    # (year, month, day). Different days produce different seeds; the
+    # same day produces the same seed. We use a simple polynomial hash
+    # (no hashlib — the seed is an int, not a cryptographic hash; the
+    # goal is determinism, not security).
+    return int(date.year * 10000 + date.month * 100 + date.day)
 
 
 def can_enter_dungeon(state: GameState) -> bool:
@@ -1539,7 +1592,22 @@ class DungeonRunner:
     medals (the gate is a threshold check, not a cost).
     """
 
-    def __init__(self, state: GameState) -> None:
+    def __init__(self, state: GameState, variant: str = "story") -> None:
+        # Task 34 (cnt-shadow-dungeon-variants): the variant ("story" |
+        # "endless" | "daily") affects the dungeon's difficulty/scaling.
+        #   Story:   fixed floors (STORY_FLOORS), narrative progression,
+        #             easier. Completes (exits) after the last floor.
+        #   Endless: infinite floors, scaling difficulty. Never completes.
+        #   Daily:   shared daily seed, fixed floors (DAILY_FLOORS), a
+        #             daily challenge. The seed is deterministic per day
+        #             (the same for all players on the same day).
+        # The variant is stored on the instance (``dr.variant``) and read
+        # by ``enter`` (sets ``state.dungeon_type``) + ``spawn_boss``
+        # (picks the boss from the pool). The default is "story" (the
+        # easiest, default dungeon — the narrative progression).
+        if variant not in ("story", "endless", "daily"):
+            variant = "story"
+        self.variant: str = variant
         self.state = state
         # Compose a World instance for the dungeon. The dungeon world is a
         # distinct instance from the road's World so the dungeon drives its
@@ -1640,10 +1708,26 @@ class DungeonRunner:
         """Spawn the fire-themed dungeon boss into the dungeon world.
 
         Reuses ``engine.enemy.spawn_boss`` (the existing spawn function)
-        with the fire-themed ``DUNGEON_BOSS`` EnemyDef. The boss's
-        ``element`` is "fire" (copied from the EnemyDef at spawn time).
+        with a fire-themed EnemyDef from the dungeon boss pool. The boss
+        is picked from ``data.enemies.DUNGEON_BOSS_POOL`` via
+        ``dungeon_boss_for_floor`` — the variant determines the pick:
+
+          * Story: a fixed order (floor N -> pool[(N-1) % len(pool)]).
+          * Endless: a fixed order, cycling forever (same as Story but
+            without the completion cap).
+          * Daily: the daily seed deterministically picks the boss for
+            each floor (the same daily seed produces the same sequence
+            of bosses — the daily challenge is the same for all players
+            on the same day).
+
+        The boss's ``element`` is "fire" (copied from the EnemyDef at
+        spawn time — the dungeon boss pool is fire-themed).
         """
-        bdef = DUNGEON_BOSS
+        from data.enemies import dungeon_boss_for_floor
+        # The seed is the daily seed for the Daily variant (so the pick
+        # is deterministic per day); 0 for Story/Endless (a fixed order).
+        seed = self.state.dungeon_seed if self.variant == "daily" else 0
+        bdef = dungeon_boss_for_floor(self._floor, seed=seed)
         boss = spawn_boss(bdef, hp=self._floor_hp(bdef),
                           dmg=self._floor_dmg(bdef),
                           gold=self._floor_gold(bdef))
@@ -1658,19 +1742,37 @@ class DungeonRunner:
     def enter(self) -> bool:
         """Enter the dungeon. Returns True if entry succeeded.
 
-        Sets ``state.dungeon_active = True``, ``state.dungeon_type =
-        "story"``, and ``state.dungeon_floor = 1``. The gate
-        (``can_enter_dungeon``) is a threshold check, NOT a cost —
-        entering does NOT spend medals or any currency. If the player
-        does not meet the gate, entry fails (returns False) and the
-        state is unchanged.
+        Sets ``state.dungeon_active = True``, ``state.dungeon_type`` to
+        the runner's variant ("story" | "endless" | "daily"), and
+        ``state.dungeon_floor = 1``. The gate (``can_enter_dungeon``) is
+        a threshold check, NOT a cost — entering does NOT spend medals or
+        any currency. If the player does not meet the gate, entry fails
+        (returns False) and the state is unchanged.
+
+        Task 34 (cnt-shadow-dungeon-variants): for the Daily variant,
+        ``enter`` also sets ``state.dungeon_seed`` to the daily dungeon
+        seed (deterministic per day) so the boss picks are deterministic
+        per day (the daily challenge is the same for all players on the
+        same day). Story/Endless do NOT set the seed (the seed is 0; the
+        boss pick is a fixed order by floor).
         """
         if not can_enter_dungeon(self.state):
             return False
         self.state.dungeon_active = True
-        self.state.dungeon_type = "story"
+        # Task 34: the dungeon_type is the runner's variant (not always
+        # "story" — the variant is the dungeon's type). The variant
+        # determines the dungeon's difficulty/scaling + completion.
+        self.state.dungeon_type = self.variant
         self.state.dungeon_floor = 1
         self._floor = 1
+        # Task 34: the Daily variant sets the dungeon seed to the daily
+        # seed (deterministic per day) so the boss picks are
+        # deterministic per day. Story/Endless leave the seed at 0 (the
+        # boss pick is a fixed order by floor, not seeded).
+        if self.variant == "daily":
+            self.state.dungeon_seed = daily_dungeon_seed()
+        else:
+            self.state.dungeon_seed = 0
         # Clear the dungeon world for a fresh dungeon run.
         self.world.enemies.clear()
         self.world.fireflies.clear()
@@ -1682,7 +1784,15 @@ class DungeonRunner:
         """Exit the dungeon. Clears ``state.dungeon_active`` and resets
         the dungeon_floor. The road loop resumes normally after exit
         (the road was never disturbed — it kept idling while the dungeon
-        was active)."""
+        was active).
+
+        Task 34: updates ``state.dungeon_best_floor`` with the floor
+        reached (the best floor across all dungeon runs — a
+        record-keeping field)."""
+        # Record the best floor reached (the deepest floor the player
+        # has cleared in any dungeon run).
+        if self.state.dungeon_floor > self.state.dungeon_best_floor:
+            self.state.dungeon_best_floor = self.state.dungeon_floor
         self.state.dungeon_active = False
         self.state.dungeon_floor = 0
         self._floor = 0
@@ -1827,11 +1937,35 @@ class DungeonRunner:
         # based progression). The boss is NOT a zone boss (the dungeon
         # does not advance the road's zone_index); it advances the
         # dungeon's own floor counter.
+        # Task 34 (cnt-shadow-dungeon-variants): the Story + Daily variants
+        # have a fixed number of floors (STORY_FLOORS / DAILY_FLOORS) —
+        # when the boss on the last floor is killed, the dungeon COMPLETES
+        # (exits). The Endless variant is infinite — the floor advances
+        # without a completion cap (the dungeon never ends). The variant's
+        # completion cap is read here so the exit is on the same code path
+        # as the floor advance (no separate "complete" method).
         if enemy.is_boss:
             self.state.bosses_killed += 1
             self.state.dungeon_floor += 1
             self._floor = self.state.dungeon_floor
             self._boss_active = False
+            # Track the best floor reached (the deepest floor the player
+            # has cleared in any dungeon run).
+            if self.state.dungeon_floor > self.state.dungeon_best_floor:
+                self.state.dungeon_best_floor = self.state.dungeon_floor
+            # Task 34: the Story + Daily variants complete after their
+            # fixed floor count. When the boss on the last floor is
+            # killed, the dungeon exits (the player "cleared" the
+            # dungeon). The Endless variant has no completion cap (the
+            # floor advances forever).
+            max_floors = 0
+            if self.variant == "story":
+                max_floors = STORY_FLOORS
+            elif self.variant == "daily":
+                max_floors = DAILY_FLOORS
+            if max_floors and self.state.dungeon_floor > max_floors:
+                # The dungeon is complete — exit (the road loop resumes).
+                self.exit()
         # Energy-from-kill (mirror the road's path).
         if evo.get("energy_from_kill", 0.0) > 0 and not self.state.energy_active:
             self.state.energy = min(self.state.energy_max,

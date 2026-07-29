@@ -133,6 +133,27 @@ class GameScreen:
         # Nav buttons.
         self.nav_buttons: list[Button] = []
         self._build_nav()
+        # Task 34 (cnt-shadow-dungeon-variants): Shadow Dungeon entry +
+        # variant selector. A button on the game screen opens the dungeon
+        # variant selector (Story/Endless/Daily). The selector is a small
+        # modal that overlays the game screen; the three variant buttons
+        # enter the dungeon with the chosen variant. The dungeon entry
+        # gate (``can_enter_dungeon``) is a threshold check; the button
+        # is disabled when the player does not meet the gate.
+        self.btn_dungeon = Button(
+            (cfg.WINDOW_W - 232, cfg.WINDOW_H - 60, 100, 44),
+            "Dungeon", on_click=self._open_dungeon_selector,
+            color=(140, 60, 180),
+        )
+        # The variant selector modal (drawn over the game screen when
+        # ``dungeon_selector_open`` is True). The three variant buttons
+        # enter the dungeon with the chosen variant.
+        self.dungeon_selector_open: bool = False
+        self.dungeon_variant_buttons: list[Button] = []
+        self._build_dungeon_variant_buttons()
+        # Task 34: the dungeon entry method (called by the variant buttons
+        # to enter the dungeon with a variant). Exposed as a public method
+        # so the UI layer + tests can call it directly.
         # Task 27 (pl-juice-polish): per-skill cooldown-ready glow timers.
         # ``_skill_glow[sid]`` is the remaining glow seconds (decays to 0).
         # ``_skill_was_on_cooldown[sid]`` tracks whether the skill was on
@@ -187,6 +208,106 @@ class GameScreen:
             x -= w + 4
             btn = Button((x, y, w, 32), label, on_click=cb)
             self.nav_buttons.insert(0, btn)
+
+    # -----------------------------------------------------------------
+    # Task 34 (cnt-shadow-dungeon-variants): dungeon entry + variant
+    # selector
+    # -----------------------------------------------------------------
+    def _build_dungeon_variant_buttons(self) -> None:
+        """Build the three dungeon variant buttons (Story/Endless/Daily).
+
+        The buttons are in the variant selector modal; each enters the
+        dungeon with the chosen variant. The buttons are always present
+        (built once); they're enabled only when the player meets the
+        dungeon entry gate (``can_enter_dungeon``) — the gate is checked
+        in ``update`` each tick.
+        """
+        from engine.runner import can_enter_dungeon, daily_dungeon_seed
+        # The selector is a 3-row modal; the buttons are stacked
+        # vertically in the centre of the screen.
+        cx = cfg.WINDOW_W // 2
+        cy = cfg.WINDOW_H // 2
+        bw, bh = 220, 44
+        variants = [
+            ("Story", "story",
+             "A fixed 5-floor dungeon. Easier, a narrative progression."),
+            ("Endless", "endless",
+             "Infinite floors, scaling difficulty. How deep can you go?"),
+            ("Daily", "daily",
+             "A shared daily challenge. 5 floors, same for everyone today."),
+        ]
+        self.dungeon_variant_buttons = []
+        # A "Close" button to dismiss the selector without entering.
+        btn_close = Button(
+            (cx - 60, cy + 4 * (bh + 8) + 8, 120, 36),
+            "Close", on_click=self._close_dungeon_selector,
+            color=(80, 80, 100),
+        )
+        self.dungeon_variant_buttons.append(btn_close)
+        for i, (label, vtype, hint) in enumerate(variants):
+            y = cy - (len(variants) // 2) * (bh + 8) + i * (bh + 8)
+            btn = Button(
+                (cx - bw // 2, y, bw, bh),
+                label, on_click=lambda v=vtype: self._enter_dungeon(v),
+                color=(140, 60, 180), hint=hint,
+            )
+            self.dungeon_variant_buttons.append(btn)
+        # Keep the variant list for reference (the UI layer can read it).
+        self._dungeon_variants = [v for _l, v, _h in variants]
+
+    def _open_dungeon_selector(self) -> None:
+        """Open the dungeon variant selector modal."""
+        # Only open if the player meets the entry gate (the gate is a
+        # threshold check; the selector shows the variants but the enter
+        # buttons are disabled if the gate is not met — checked in
+        # ``update``).
+        self.dungeon_selector_open = True
+
+    def _close_dungeon_selector(self) -> None:
+        """Close the dungeon variant selector modal without entering."""
+        self.dungeon_selector_open = False
+
+    def _enter_dungeon(self, variant: str) -> None:
+        """Enter the dungeon with the chosen variant.
+
+        Constructs a ``DungeonRunner`` with the variant, enters it (the
+        gate is a threshold check — ``enter`` returns False if the gate
+        is not met), and ticks the dungeon alongside the road (the road
+        keeps idling). The dungeon runner is stored on the game so the
+        main loop can tick it + the road together.
+
+        The variant is one of "story" | "endless" | "daily":
+          * Story:   a fixed 5-floor dungeon, easier (the narrative
+                     progression).
+          * Endless: infinite floors, scaling difficulty.
+          * Daily:   a shared daily challenge (5 floors, same for
+                     everyone today — the daily seed is deterministic
+                     per day).
+        """
+        from engine.runner import DungeonRunner, can_enter_dungeon
+        state = self.game.state
+        # The gate is a threshold check; if the player does not meet it,
+        # do not enter (the button should be disabled, but guard here too).
+        if not can_enter_dungeon(state):
+            self.notify("Need 50 medals or zone 9 to enter the dungeon.",
+                        C.text_warn)
+            return
+        # Construct the dungeon runner with the variant + enter. The
+        # dungeon runner is stored on the game so the main loop can tick
+        # it alongside the road.
+        dr = DungeonRunner(state, variant=variant)
+        if not dr.enter():
+            self.notify("Could not enter the dungeon.", C.text_warn)
+            return
+        self.game.dungeon_runner = dr
+        # Close the selector modal (the dungeon is now active).
+        self.dungeon_selector_open = False
+        # Notify the player which variant they entered.
+        vlabel = {"story": "Story", "endless": "Endless",
+                  "daily": "Daily"}.get(variant, variant)
+        self.notify(f"Shadow Dungeon ({vlabel}) entered!", (255, 180, 90))
+        from assets import play
+        play("skill", state.sound_on)
 
     def _build_skill_buttons(self) -> None:
         self.skill_buttons = []
@@ -252,6 +373,12 @@ class GameScreen:
                 self._welcome_notify(self.welcome_pending)
                 self.welcome_pending = None
             return
+        # Task 34: the dungeon variant selector modal takes priority over
+        # the road tap + the other buttons (the modal is an overlay).
+        if self.dungeon_selector_open:
+            for b in self.dungeon_variant_buttons:
+                b.handle(event)
+            return
         # Tap on the road.
         if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
                 and cfg.ROAD_TOP <= event.pos[1] <= cfg.ROAD_BOTTOM):
@@ -261,11 +388,35 @@ class GameScreen:
         for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
             b.handle(event)
         self.btn_energy.handle(event)
+        # Task 34: the dungeon entry button (opens the variant selector).
+        self.btn_dungeon.handle(event)
 
     def update(self, dt: float) -> None:
         for b in self.nav_buttons + self.skill_buttons + self.finisher_buttons:
             b.update(dt)
         self.btn_energy.update(dt)
+        # Task 34: update the dungeon entry button + the variant selector.
+        # The dungeon button is enabled only when the player meets the
+        # entry gate (``can_enter_dungeon``); the variant buttons inside
+        # the selector are gated the same way.
+        from engine.runner import can_enter_dungeon
+        gate_met = can_enter_dungeon(self.game.state)
+        self.btn_dungeon.update(dt)
+        self.btn_dungeon.enabled = gate_met
+        for b in self.dungeon_variant_buttons:
+            b.update(dt)
+            # The "Close" button is always enabled; the variant buttons
+            # are enabled only when the gate is met.
+            if b is not self.dungeon_variant_buttons[0]:
+                b.enabled = gate_met
+        # If the dungeon is active, tick the dungeon runner alongside the
+        # road (the road keeps idling). The dungeon runner is stored on
+        # the game; the main loop ticks the road runner, the screen ticks
+        # the dungeon runner (the dungeon is a track on the same run).
+        if (self.game.state.dungeon_active
+                and hasattr(self.game, "dungeon_runner")
+                and self.game.dungeon_runner is not None):
+            self.game.dungeon_runner.update(dt)
         state = self.game.state
         # Refresh skill buttons if the runner's skill set changed.
         if len(self.skill_buttons) != len(self.game.runner.skills):
@@ -745,6 +896,18 @@ class GameScreen:
         for b in self.nav_buttons:
             b.draw(surf)
 
+        # Task 34 (cnt-shadow-dungeon-variants): the dungeon entry button
+        # + the dungeon HUD (the active dungeon's floor + variant). The
+        # button opens the variant selector modal; the HUD shows the
+        # current dungeon state (floor / variant) when a dungeon is active.
+        self.btn_dungeon.draw(surf)
+        if state.dungeon_active:
+            self._draw_dungeon_hud(surf, state)
+        # Task 34: the dungeon variant selector modal (an overlay drawn
+        # over the game screen when ``dungeon_selector_open`` is True).
+        if self.dungeon_selector_open:
+            self._draw_dungeon_selector(surf)
+
         # Welcome modal.
         if self.welcome_pending:
             self._draw_welcome(surf)
@@ -811,6 +974,81 @@ class GameScreen:
         self.toasts.append(Toast(text, life=3.0, color=color))
         if len(self.toasts) > 6:
             self.toasts.pop(0)
+
+    # -----------------------------------------------------------------
+    # Task 34 (cnt-shadow-dungeon-variants): dungeon HUD + selector
+    # -----------------------------------------------------------------
+    def _draw_dungeon_hud(self, surf, state) -> None:
+        """Draw the active dungeon's HUD (floor + variant + exit button).
+
+        A small panel in the top-left of the play area showing the
+        current dungeon's floor + variant (Story/Endless/Daily). The
+        dungeon's best floor is shown too (the depth record). The HUD is
+        drawn only when a dungeon is active (the dungeon is a track on
+        the same run, not a separate screen).
+        """
+        from engine.runner import STORY_FLOORS, DAILY_FLOORS
+        x = 16
+        y = cfg.HUD_H + 8
+        # The dungeon variant label (Story/Endless/Daily).
+        vlabel = {"story": "Story", "endless": "Endless",
+                  "daily": "Daily"}.get(state.dungeon_type, state.dungeon_type)
+        # The floor label (the current floor + the max for the variant).
+        if state.dungeon_type == "story":
+            floor_txt = f"Floor {state.dungeon_floor}/{STORY_FLOORS}"
+        elif state.dungeon_type == "daily":
+            floor_txt = f"Floor {state.dungeon_floor}/{DAILY_FLOORS}"
+        else:
+            floor_txt = f"Floor {state.dungeon_floor}"
+        # The panel.
+        pw, ph = 200, 56
+        panel = pygame.Rect(x, y, pw, ph)
+        draw_panel(surf, panel, fill=(30, 18, 50),
+                  border=(140, 60, 180), border_w=2, radius=8)
+        draw_text(surf, f"Shadow Dungeon — {vlabel}",
+                  (x + 8, y + 6), font_sm(bold=True), (200, 160, 240))
+        draw_text(surf, floor_txt,
+                  (x + 8, y + 26), font_xs(), C.text_dim)
+        draw_text(surf, f"Best: {state.dungeon_best_floor}",
+                  (x + 110, y + 26), font_xs(), C.text_dim)
+
+    def _draw_dungeon_selector(self, surf) -> None:
+        """Draw the dungeon variant selector modal.
+
+        A dim overlay + a panel with the three variant buttons
+        (Story/Endless/Daily) + a Close button. The buttons are built in
+        ``_build_dungeon_variant_buttons``; here we just draw the modal
+        frame + the buttons. The buttons are enabled only when the
+        player meets the entry gate (``can_enter_dungeon``).
+        """
+        from engine.runner import can_enter_dungeon
+        # Dim overlay (the modal is an overlay over the game screen).
+        dim = pygame.Surface((cfg.WINDOW_W, cfg.WINDOW_H), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 120))
+        surf.blit(dim, (0, 0))
+        # The modal panel (a frame around the variant buttons).
+        cx = cfg.WINDOW_W // 2
+        cy = cfg.WINDOW_H // 2
+        pw, ph = 360, 280
+        panel = pygame.Rect(0, 0, pw, ph)
+        panel.center = (cx, cy)
+        draw_panel(surf, panel, fill=(22, 18, 36),
+                  border=(140, 60, 180), border_w=2, radius=16)
+        draw_text_center(surf, "Shadow Dungeon",
+                         (cx, panel.y + 24), font_lg(bold=True),
+                         (200, 160, 240))
+        draw_text_center(surf, "Choose your descent",
+                         (cx, panel.y + 50), font_sm(), C.text_dim)
+        # The entry gate status (a hint if the gate is not met).
+        gate_met = can_enter_dungeon(self.game.state)
+        if not gate_met:
+            draw_text_center(surf,
+                             "Need 50 medals or zone 9 to enter.",
+                             (cx, panel.bottom - 24), font_xs(),
+                             C.text_warn)
+        # Draw the variant buttons (built in _build_dungeon_variant_buttons).
+        for b in self.dungeon_variant_buttons:
+            b.draw(surf)
 
     # -----------------------------------------------------------------
     # Task 27 (pl-juice-polish): low-HP red vignette

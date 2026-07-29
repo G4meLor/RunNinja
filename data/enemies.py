@@ -230,6 +230,86 @@ BOSS_PHASE_PATTERNS: dict[int, str] = {
 BOSS_SHIELD_FRACTION = 0.3
 
 
+# ---------------------------------------------------------------------------
+# Shadow Dungeon boss pool (Task 34 / cnt-shadow-dungeon-variants)
+# ---------------------------------------------------------------------------
+# A pool of fire-themed bosses for the dungeon variants. The dungeon is
+# fire-themed (Task 23 — the dungeon's enemies + boss use the Fire Godai
+# element), so the boss pool is a set of fire-element EnemyDefs. The pool
+# is the source of bosses for the dungeon variants: the Story variant
+# picks bosses in a fixed order (a narrative progression), the Endless
+# variant cycles the pool with scaling, and the Daily variant uses the
+# daily seed to deterministically pick a boss per floor (the same daily
+# seed produces the same sequence of bosses — the daily challenge is the
+# same for all players on the same day).
+#
+# The pool lives in data/enemies.py (not engine/runner.py) so the boss
+# definitions are owned by the data layer, not the runner — the runner
+# picks from the pool; the pool is content data. The existing
+# ``DUNGEON_BOSS`` (defined in engine/runner.py for the Task 23
+# DungeonRunner) is the first entry in the pool (the original dungeon
+# boss, "Shadow Inferno"); the pool adds more fire-themed bosses for
+# variety across the variants.
+DUNGEON_BOSS_POOL: list[EnemyDef] = [
+    # The original dungeon boss (Task 23's DUNGEON_BOSS) — the dungeon's
+    # heart of fire. Kept here as the first entry so the Story variant's
+    # first floor is the familiar dungeon boss.
+    EnemyDef("d_boss", "Shadow Inferno", "demon", 10, 14.0, 6.0, 16.0, 14, 46,
+             rare_drop=0.7, desc="The dungeon's heart of fire.",
+             element="fire",
+             lore="The dungeon's heart of fire, whose rage fuels the shadow deep."),
+    # A flame-winged wraith — a fiercer dungeon capstone.
+    EnemyDef("d_phoenix", "Ashen Phoenix", "wraith", 20, 16.0, 7.0, 18.0, 16, 48,
+             rare_drop=0.8, desc="A phoenix born of the dungeon's ashes.",
+             element="fire",
+             lore="A phoenix reborn from the dungeon's ashes, whose wings scorch the shadow."),
+    # A molten oni warlord — the dungeon's fiercest guardian.
+    EnemyDef("d_oni_lord", "Molten Oni Lord", "oni", 30, 18.0, 8.0, 20.0, 16, 50,
+             rare_drop=0.9, desc="The warlord of the molten deep.",
+             element="fire",
+             lore="The warlord of the molten deep, whose crown is the fire of the dungeon's heart."),
+    # A void-touched flame dragon — the dungeon's final guardian (the
+    # deepest boss, the capstone of the Story variant).
+    EnemyDef("d_void_dragon", "Voidfire Dragon", "dragon", 40, 22.0, 9.0, 22.0, 18, 54,
+             rare_drop=1.0, desc="A dragon of void and fire.",
+             element="fire",
+             lore="A dragon of void and fire, the deepest guardian of the shadow dungeon."),
+]
+
+
+def dungeon_boss_for_floor(floor: int, seed: int = 0) -> EnemyDef:
+    """Pick a dungeon boss for the given floor.
+
+    The floor is 1-indexed (floor 1 is the first floor). The boss is
+    picked from ``DUNGEON_BOSS_POOL``: the Story variant picks in a
+    fixed order (floor N -> pool[(N-1) % len(pool)]), the Endless
+    variant cycles the pool with scaling, and the Daily variant uses the
+    seed to deterministically pick (a seeded shuffle of the pool so the
+    same seed produces the same sequence).
+
+    This helper is the single pick point for the dungeon boss pool; the
+    runner delegates to it so the boss-pick logic is owned by the data
+    layer (the pool) + a single function, not duplicated across the
+    variants. The ``seed`` is 0 for Story/Endless (deterministic by
+    floor) and the daily seed for Daily (deterministic per day).
+    """
+    if floor < 1:
+        floor = 1
+    if seed:
+        # Daily variant: a seeded pick so the same daily seed produces
+        # the same boss for the same floor (the daily challenge is the
+        # same for all players on the same day). We use a simple
+        # deterministic hash of (seed, floor) to pick an index — no need
+        # for a full RNG; the pick is a single index into the pool.
+        idx = (seed + floor * 31) % len(DUNGEON_BOSS_POOL)
+    else:
+        # Story / Endless: a fixed order by floor (floor N -> pool index
+        # N-1, cycling). The Story variant uses the first STORY_FLOORS
+        # floors; the Endless variant cycles forever.
+        idx = (floor - 1) % len(DUNGEON_BOSS_POOL)
+    return DUNGEON_BOSS_POOL[idx]
+
+
 def zone_by_id(zone_id: str) -> dict:
     """Look up a zone by its string id. Raises KeyError if unknown."""
     for z in ZONES:
