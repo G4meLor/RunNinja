@@ -9,6 +9,7 @@ from theme import draw_text, draw_text_center, draw_panel
 from ui.widgets import Button
 from core.state import SAVE_FILE
 from core.quality import valid_tiers
+from utils import clamp
 
 
 # The three render-quality tiers, in the order the toggle cycles through
@@ -26,22 +27,42 @@ class SettingsScreen:
                                on_click=lambda: self.game.set_screen("game"))
         self.btn_sound = Button((cfg.WINDOW_W // 2 - 160, 220, 320, 48), "",
                                 on_click=self._toggle_sound)
-        self.btn_motion = Button((cfg.WINDOW_W // 2 - 160, 290, 320, 48), "",
+        # Task 37 (pl-music-sfx): a SEPARATE music toggle, distinct from
+        # the Sound/SFX toggle above. ``music_on`` is gated on its own
+        # state field (``state.music_on``), NOT on ``state.sound_on``.
+        # The two toggles are independent (a player can have SFX on +
+        # music off, or music on + SFX off, or both, or neither).
+        self.btn_music = Button((cfg.WINDOW_W // 2 - 160, 290, 320, 48), "",
+                                on_click=self._toggle_music)
+        self.btn_motion = Button((cfg.WINDOW_W // 2 - 160, 360, 320, 48), "",
                                  on_click=self._toggle_motion)
         # Render-quality 3-way toggle. Cycles High -> Medium -> Low -> High.
         # When reduced_motion is on, the toggle is locked to Low (the gate
         # forces the low tier; the toggle reflects that rather than
         # letting the player pick a tier that would be silently overridden).
-        self.btn_quality = Button((cfg.WINDOW_W // 2 - 160, 360, 320, 48), "",
+        self.btn_quality = Button((cfg.WINDOW_W // 2 - 160, 430, 320, 48), "",
                                   on_click=self._toggle_quality)
-        self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 470, 320, 48),
+        self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 540, 320, 48),
                                 "Reset all progress", on_click=self._reset, color=(160, 50, 60))
-        self.buttons = [self.btn_back, self.btn_sound, self.btn_motion,
-                        self.btn_quality, self.btn_reset]
+        self.buttons = [self.btn_back, self.btn_sound, self.btn_music,
+                        self.btn_motion, self.btn_quality, self.btn_reset]
+        # Task 37 (pl-music-sfx): a volume slider for ``state.volume``
+        # (0.0..1.0). The slider sets ``state.volume`` and saves. The
+        # slider rect is below the music toggle; the player drags the
+        # handle to set the volume.
+        self._slider_rect = pygame.Rect(cfg.WINDOW_W // 2 - 160, 500, 320, 16)
+        self._slider_dragging = False
         self.reset_confirm = 0.0
 
     def _toggle_sound(self):
         self.game.state.sound_on = not self.game.state.sound_on
+        self.game.state.save()
+
+    def _toggle_music(self):
+        # Task 37 (pl-music-sfx): a SEPARATE music toggle, distinct from
+        # the Sound/SFX toggle. Gated on ``state.music_on``, NOT on
+        # ``state.sound_on``. The two toggles are independent.
+        self.game.state.music_on = not self.game.state.music_on
         self.game.state.save()
 
     def _toggle_motion(self):
@@ -100,11 +121,35 @@ class SettingsScreen:
     def handle(self, event):
         for b in self.buttons:
             b.handle(event)
+        # Task 37 (pl-music-sfx): the volume slider. Handle mouse events
+        # for the slider rect (drag the handle to set the volume).
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self._slider_rect.collidepoint(event.pos):
+                self._slider_dragging = True
+                self._set_volume_from_x(event.pos[0])
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self._slider_dragging:
+                self._slider_dragging = False
+                self.game.state.save()
+        elif event.type == pygame.MOUSEMOTION:
+            if self._slider_dragging:
+                self._set_volume_from_x(event.pos[0])
+
+    def _set_volume_from_x(self, x):
+        """Set ``state.volume`` from a mouse x position on the slider."""
+        r = self._slider_rect
+        pct = (x - r.x) / max(1, r.w)
+        self.game.state.volume = clamp(pct, 0.0, 1.0)
 
     def update(self, dt):
         state = self.game.state
         self.btn_sound.label = f"Sound: {'ON' if state.sound_on else 'OFF'}"
         self.btn_sound.color = (60, 120, 90) if state.sound_on else (90, 60, 60)
+        # Task 37 (pl-music-sfx): the music toggle (SEPARATE from the
+        # Sound/SFX toggle). Green on / red off, same as the Sound
+        # toggle, but gated on ``state.music_on`` (NOT ``sound_on``).
+        self.btn_music.label = f"Music: {'ON' if state.music_on else 'OFF'}"
+        self.btn_music.color = (60, 120, 90) if state.music_on else (90, 60, 60)
         self.btn_motion.label = f"Reduced motion: {'ON' if state.reduced_motion else 'OFF'}"
         self.btn_motion.color = (60, 120, 90) if state.reduced_motion else (90, 60, 60)
         # Render-quality toggle: show the effective tier (Low when
@@ -144,14 +189,34 @@ class SettingsScreen:
         draw_text_center(surf, "Settings", (cfg.WINDOW_W // 2, 60), font_xl(bold=True), C.text)
         draw_text_center(surf, "Tune the experience.",
                          (cfg.WINDOW_W // 2, 100), font_sm(), C.text_dim)
-        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 330)
+        # The panel is taller now (it holds the music toggle + the volume
+        # slider + the existing toggles). The buttons are laid out below.
+        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 430)
         draw_panel(surf, r, fill=C.panel, border=C.panel_border)
         draw_text(surf, "Accessibility", (r.x + 20, r.y + 16), font_md(bold=True), C.text)
         draw_text(surf, "Reduced motion disables shake & heavy particles.",
                   (r.x + 20, r.y + 40), font_xs(), C.text_dim)
         draw_text(surf, "Render quality caps particles & glow (Low = 60fps floor).",
-                  (r.x + 20, r.y + 330 - 26), font_xs(), C.text_dim)
+                  (r.x + 20, r.y + 430 - 26), font_xs(), C.text_dim)
         for b in self.buttons:
             b.draw(surf)
+        # Task 37 (pl-music-sfx): the volume slider. A horizontal slider
+        # for ``state.volume`` (0.0..1.0). The slider is below the music
+        # toggle (which is below the Sound toggle). The player drags the
+        # handle to set the volume; the value is shown as a percentage.
+        from theme import draw_bar
+        sr = self._slider_rect
+        # Label + value.
+        draw_text(surf, "Music volume",
+                  (sr.x, sr.y - 18), font_xs(), C.text_dim)
+        draw_text(surf, f"{int(self.game.state.volume * 100)}%",
+                  (sr.right - 40, sr.y - 18), font_xs(), C.text)
+        # The track + the fill.
+        draw_bar(surf, sr, self.game.state.volume,
+                 fill=C.hp, bg=C.hp_bg, border=C.panel_border, radius=3)
+        # The handle (a small circle at the fill's right edge).
+        hx = sr.x + int(sr.w * self.game.state.volume)
+        pygame.draw.circle(surf, C.text, (hx, sr.centery), 7)
+        pygame.draw.circle(surf, C.panel_border, (hx, sr.centery), 7, 1)
         draw_text_center(surf, f"Save: {SAVE_FILE}",
                          (cfg.WINDOW_W // 2, cfg.WINDOW_H - 110), font_xs(), C.text_muted)

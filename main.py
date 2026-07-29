@@ -21,7 +21,7 @@ from core.state import GameState
 from core.quality import particle_mult
 from core.login_streak import check_streak, apply_streak
 from engine.runner import Runner
-from assets import init_sfx
+from assets import init_sfx, make_music_sound, root_hz_for_zone
 from engine.particles import ParticleSystem2
 from ui.screen_menu import MenuScreen
 from ui.screen_game import GameScreen
@@ -86,6 +86,31 @@ class Game:
         self.shake_t = 0.0
         self.shake_amp = 0.0
         self.hitstop = 0.0
+
+        # --- Generative music loop (Task 37 / pl-music-sfx) ---
+        # A background ambient music loop gated on ``state.music_on``
+        # (SEPARATE from ``state.sound_on`` -- the SFX gate). The loop
+        # plays the current zone's segment (a 4-bar generative drone +
+        # koto melody + taiko percussion keyed to the zone hue); when the
+        # segment ends (or the zone changes), it generates the next
+        # segment (re-rolled) at the new root_hz and crossfades. The
+        # output is scaled by ``state.volume``. The loop is non-blocking:
+        # a reserved mixer channel + ``get_busy()`` checks each frame;
+        # the crossfade is a 1s volume ramp-in on the new segment (no
+        # jarring key change -- the new segment fades in gently).
+        self._music_channel = None
+        self._music_current = None        # the currently-playing Sound
+        self._music_zone_index = -1       # the zone the current segment is for
+        self._music_cycle_seed = 0        # per-cycle seed (re-rolled each cycle)
+        self._music_fade = 0.0           # fade-in timer (0 = not fading)
+        try:
+            if pygame.mixer.get_init():
+                # Reserve a channel for the music (channel 0). The SFX
+                # use the default pool (channels 1..7); the music is on
+                # its own channel so it doesn't cut SFX and vice versa.
+                self._music_channel = pygame.mixer.Channel(0)
+        except Exception:
+            self._music_channel = None
 
         self.screens = {
             "menu": MenuScreen(self),
@@ -233,6 +258,118 @@ class Game:
             self._save_timer = 0.0
             self.state.save()
         self.screens[self.current_screen].update(dt)
+        # Generative music loop (Task 37 / pl-music-sfx): plays the
+        # current zone's ambient segment, re-rolling each cycle and
+        # crossfading on zone changes. Gated on ``state.music_on``
+        # (SEPARATE from ``state.sound_on``); scaled by ``state.volume``.
+        # Non-blocking: a reserved channel + ``get_busy()`` checks each
+        # frame; the crossfade is a 1s overlap.
+        self._update_music(dt)
+
+    def _update_music(self, dt):
+        """The generative music loop.
+
+        Plays the current zone's ambient segment (a 4-bar generative
+        drone + koto + taiko keyed to the zone hue); when the segment
+        ends (or the zone changes), generates the next segment (re-rolled)
+        and fades it in. Gated on ``state.music_on``; scaled by
+        ``state.volume``. Non-blocking (a reserved channel + get_busy()
+        checks). Degrades gracefully (no crash if the mixer is gone).
+        """
+        try:
+            # Gate: music_on is SEPARATE from sound_on. If music is off,
+            # stop the current segment and return (don't generate).
+            if not self.state.music_on:
+                self._stop_music()
+                return
+            ch = self._music_channel
+            if ch is None:
+                return  # no mixer; nothing to play
+            # Fade-in in progress: ramp the new segment's volume up over
+            # ~1s (a gentle fade-in so the new segment doesn't pop in --
+            # no jarring key change). The previous segment has already
+            # ended (or was stopped) so there's no overlap to manage.
+            if self._music_fade > 0:
+                self._music_fade -= dt
+                # Ramp the new segment's volume from 0 to state.volume.
+                t = 1.0 - max(0.0, self._music_fade / 1.0)
+                if self._music_current is not None:
+                    try: self._music_current.set_volume(self.state.volume * t)
+                    except Exception: pass
+                if self._music_fade <= 0:
+                    self._music_fade = 0.0
+                return
+            # Not fading: keep the current segment's volume scaled by
+            # state.volume (so the slider takes effect live).
+            if self._music_current is not None:
+                try: self._music_current.set_volume(self.state.volume)
+                except Exception: pass
+            # Did the zone change? If so, start a fade-in of a new
+            # segment at the new root_hz (no jarring key change -- the
+            # new segment fades in gently from 0).
+            if self.state.zone_index != self._music_zone_index:
+                self._start_music_segment(fade=True)
+                return
+            # Is the current segment done? If so, re-roll the next cycle
+            # (a new segment at the same root_hz, re-seeded, faded in).
+            if not ch.get_busy():
+                self._start_music_segment(fade=True)
+        except Exception:
+            # Degrade gracefully: never crash the game over music.
+            pass
+
+    def _stop_music(self):
+        """Stop the music and clear the loop state (music_on turned off)."""
+        try:
+            ch = self._music_channel
+            if ch is not None:
+                ch.stop()
+            if self._music_current is not None:
+                try: self._music_current.stop()
+                except Exception: pass
+        except Exception:
+            pass
+        self._music_current = None
+        self._music_fade = 0.0
+        self._music_zone_index = -1
+
+    def _start_music_segment(self, *, fade: bool = False):
+        """Generate + play a new segment at the current zone's root_hz.
+
+        Generates a new segment (re-rolled with a fresh seed) at the
+        current zone's root_hz (mapped from the zone hue) and plays it
+        on the music channel. If ``fade``, the segment fades in over
+        ~1s (a gentle fade-in so the new segment doesn't pop in -- no
+        jarring key change on zone transitions). Degrades gracefully if
+        the mixer is unavailable or the segment fails to generate.
+        """
+        from data.enemies import zone_by_index
+        try:
+            zone = zone_by_index(self.state.zone_index)
+            root_hz = root_hz_for_zone(self.state.zone_index, zone.get("hue", 0))
+        except Exception:
+            root_hz = 220.0
+        # Re-roll the cycle seed (non-repetition).
+        self._music_cycle_seed = int(rng().random() * (1 << 31))
+        snd = make_music_sound(root_hz, bars=4, seed=self._music_cycle_seed)
+        if snd is None:
+            return  # mixer unavailable; degrade gracefully
+        ch = self._music_channel
+        if ch is None:
+            return
+        try:
+            if fade:
+                # Start at volume 0 and ramp up over ~1s.
+                snd.set_volume(0.0)
+                self._music_fade = 1.0
+            else:
+                snd.set_volume(self.state.volume)
+                self._music_fade = 0.0
+            ch.play(snd)
+            self._music_current = snd
+            self._music_zone_index = self.state.zone_index
+        except Exception:
+            pass
 
     def _update_particles(self, dt):
         # Death bursts are handled by DeathFxSystem (wired in the runner);

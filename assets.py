@@ -843,27 +843,105 @@ _SFX: dict[str, object] = {}
 _SFX_OK = False
 
 
-def _make_tone(freq, dur, vol=0.3, decay=8.0, harmonics=1):
-    import numpy as np
+# ---------------------------------------------------------------------------
+# Layered SFX (Task 37 / pl-music-sfx)
+# ---------------------------------------------------------------------------
+# The single-sine tones above are upgraded to layered SFX: an ADSR
+# envelope (attack/decay/sustain/release) replaces the pure exponential
+# decay; a filtered noise burst layers with the tone for a richer
+# transient; a small random detune (±2%) per build adds subtle variation
+# so repeated taps don't sound identical. Noise-layer gains are
+# conservative (a small fraction of the tone gain) for sound-sensitive
+# players. The ``play(name, sound_on)`` API and the ``_SFX`` dict are
+# unchanged -- callers still pass ``state.sound_on``; only the timbre is
+# richer.
+
+def _adsr(n, sr, dur, *, attack, decay_t, sustain, release_t):
+    """An ADSR envelope of length ``n``.
+
+    ``attack`` is in seconds; ``decay_t`` and ``release_t`` are fractions
+    of ``dur``; ``sustain`` is the held level (0..1). Falls back to a
+    flat envelope if the segments don't fit (no crash on very short
+    sounds).
+    """
+    env = np.zeros(n, dtype=np.float32)
+    if n <= 0:
+        return env
+    a = int(sr * attack)
+    d = int(n * decay_t)
+    r = int(n * release_t)
+    # Clamp segments so attack + decay + release never exceeds n.
+    a = min(a, n)
+    d = min(d, max(0, n - a))
+    r = min(r, max(0, n - a - d))
+    if a > 0:
+        env[:a] = np.linspace(0, 1, a, dtype=np.float32)
+    if d > 0:
+        env[a:a + d] = np.linspace(1, sustain, d, dtype=np.float32)
+    sus_end = n - r
+    if sus_end > a + d:
+        env[a + d:sus_end] = sustain
+    if r > 0:
+        env[-r:] = np.linspace(sustain, 0, r, dtype=np.float32)
+    return env
+
+
+def _noise_burst(n, sr, dur, *, decay=10.0):
+    """A noise burst with an exponential decay (a transient layer).
+
+    Normalized to ~unit peak so the caller can scale it by a small gain.
+    """
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    noise = np.random.standard_normal(n).astype(np.float32)
+    noise *= np.exp(-np.arange(n) / sr * decay)
+    m = float(np.max(np.abs(noise)) + 1e-9)
+    return noise / m
+
+
+def _make_tone(freq, dur, vol=0.3, decay=8.0, harmonics=1, noise=0.0):
+    """Layered SFX tone: ADSR envelope + optional noise layer + pitch variation.
+
+    Replaces the single-sine tone (Task 37 / pl-music-sfx). ``noise`` is
+    the noise-layer gain as a fraction of ``vol`` (conservative: 0.0-0.1).
+    """
     try:
         sr = 22050; n = int(sr * dur); t = np.arange(n) / sr
+        # Pitch variation: a small random detune per build (±2%).
+        detune = 1.0 + rng().uniform(-0.02, 0.02)
+        f = freq * detune
         wave = np.zeros(n, dtype=np.float32)
         for h in range(1, harmonics + 1):
-            wave += (1.0 / h) * np.sin(2 * np.pi * freq * h * t)
-        wave *= vol * np.exp(-t * decay)
+            wave += (1.0 / h) * np.sin(2 * np.pi * f * h * t)
+        # ADSR envelope (fast attack, decay to sustain, release).
+        env = _adsr(n, sr, dur, attack=0.005, decay_t=0.1,
+                   sustain=0.7, release_t=0.05)
+        # A long-decay tail (the original exponential) layered under the
+        # ADSR so short taps still decay naturally.
+        wave *= vol * env * np.exp(-t * decay)
+        # Noise layer (filtered noise burst) at a conservative gain.
+        if noise > 0:
+            wave += _noise_burst(n, sr, dur, decay=decay) * (vol * noise)
         stereo = np.column_stack([wave, wave])
         return pygame.sndarray.make_sound((stereo * 32767).astype(np.int16))
     except Exception:
         return None
 
 
-def _make_sweep(f0, f1, dur, vol=0.3):
-    import numpy as np
+def _make_sweep(f0, f1, dur, vol=0.3, noise=0.0):
+    """Layered SFX sweep: ADSR + pitch sweep + pitch variation + noise layer."""
     try:
         sr = 22050; n = int(sr * dur); t = np.arange(n) / sr
-        freq = f0 + (f1 - f0) * (t / dur)
+        # Pitch variation: a small random detune per build (±2%).
+        detune = 1.0 + rng().uniform(-0.02, 0.02)
+        freq = (f0 + (f1 - f0) * (t / dur)) * detune
         phase = 2 * np.pi * np.cumsum(freq) / sr
-        wave = vol * np.sin(phase) * np.exp(-t * 4)
+        wave = np.sin(phase)
+        env = _adsr(n, sr, dur, attack=0.005, decay_t=0.1,
+                   sustain=0.7, release_t=0.1)
+        wave *= vol * env * np.exp(-t * 4)
+        if noise > 0:
+            wave += _noise_burst(n, sr, dur, decay=8.0) * (vol * noise)
         stereo = np.column_stack([wave, wave])
         return pygame.sndarray.make_sound((stereo * 32767).astype(np.int16))
     except Exception:
@@ -877,14 +955,14 @@ def init_sfx():
     try:
         if not pygame.mixer.get_init():
             return
-        _SFX["tap"] = _make_tone(330, 0.05, 0.15, 20)
-        _SFX["crit"] = _make_tone(660, 0.10, 0.22, 10, 2)
-        _SFX["kill"] = _make_tone(220, 0.08, 0.18, 12)
-        _SFX["boss"] = _make_tone(110, 0.5, 0.35, 4, 3)
-        _SFX["firefly"] = _make_sweep(600, 1200, 0.3, 0.25)
-        _SFX["skill"] = _make_sweep(300, 900, 0.4, 0.25)
-        _SFX["ascend"] = _make_sweep(200, 1200, 1.0, 0.35)
-        _SFX["gacha"] = _make_sweep(400, 800, 0.3, 0.25)
+        _SFX["tap"] = _make_tone(330, 0.05, 0.15, 20, noise=0.05)
+        _SFX["crit"] = _make_tone(660, 0.10, 0.22, 10, 2, noise=0.06)
+        _SFX["kill"] = _make_tone(220, 0.08, 0.18, 12, noise=0.05)
+        _SFX["boss"] = _make_tone(110, 0.5, 0.35, 4, 3, noise=0.08)
+        _SFX["firefly"] = _make_sweep(600, 1200, 0.3, 0.25, noise=0.04)
+        _SFX["skill"] = _make_sweep(300, 900, 0.4, 0.25, noise=0.05)
+        _SFX["ascend"] = _make_sweep(200, 1200, 1.0, 0.35, noise=0.06)
+        _SFX["gacha"] = _make_sweep(400, 800, 0.3, 0.25, noise=0.04)
         # Task 25 (gp-skill-synergy-rhythm): a soft, short, high-pitched
         # tick for the rhythm streak increment -- a non-visual cue for
         # reduced_motion players (the visual rhythm display is suppressed
@@ -896,6 +974,12 @@ def init_sfx():
         # + cooldown progress fill are the non-visual cues for
         # ``reduced_motion`` players (the chime is the audio cue).
         _SFX["skill_ready"] = _make_sweep(600, 1200, 0.25, 0.20)
+        # Task 37 (pl-music-sfx): UI sounds -- a short click for button
+        # presses and a soft confirm for confirmations. Conservative
+        # volumes + a small noise layer so they read as a real click, not
+        # a pure sine beep.
+        _SFX["ui_click"] = _make_tone(520, 0.04, 0.10, 25, noise=0.04)
+        _SFX["ui_confirm"] = _make_tone(740, 0.08, 0.14, 14, 2, noise=0.04)
         _SFX_OK = True
     except Exception:
         _SFX_OK = False
@@ -917,3 +1001,210 @@ def play(name, sound_on=True):
         snd.play()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Generative ambient music (Task 37 / pl-music-sfx)
+# ---------------------------------------------------------------------------
+# A NumPy generative engine: a slow drone (a low sustained note with a
+# slow amplitude LFO) + a plucked koto-like melody (a random walk over the
+# 5 notes of the major pentatonic scale relative to ``root_hz`` -- root,
+# min3, 4th, 5th, octave -- plucked = fast attack + exponential decay)
+# + taiko percussion (a low boom = a noise burst with a fast decay + a
+# low sine thump on the downbeats). The segment is ``bars`` bars at a
+# tempo (default 90 BPM -> 4 bars ~= 10.7s). The root_hz is mapped from
+# the zone hue (the zone's element/color -> a base frequency).
+#
+# The segment is returned as a stereo int16 NumPy array (the raw array is
+# more testable than a ``pygame.Sound`` -- the brief's specimen test calls
+# ``generate_music_segment(root_hz=220, bars=4)`` and asserts no crash).
+# ``make_music_sound`` wraps the array in a ``pygame.Sound`` for playback.
+#
+# Volumes are CONSERVATIVE (the drone + melody + percussion mix at low
+# individual gains so the total is gentle -- sound-sensitive players).
+# The music loop in ``main.py`` scales the output by ``state.volume``.
+
+# The 5 notes of the major pentatonic scale, as frequency ratios relative
+# to the root: root, min3, 4th, 5th, octave. (The major pentatonic is
+# root, M2, M3, 5, M6 -- but the brief specifies "root, min3, 4th, 5th,
+# octave", which is the minor pentatonic shape; we follow the brief.)
+_PENTATONIC_RATIOS = (1.0, 6.0 / 5.0, 4.0 / 3.0, 3.0 / 2.0, 2.0)
+
+# A conservative per-layer gain (the drone + melody + percussion mix at
+# low individual volumes so the total is gentle).
+_DRONE_GAIN = 0.06
+_MELODY_GAIN = 0.10
+_PERCUSSION_GAIN = 0.12
+
+_MUSIC_SR = 22050          # sample rate for the music segments
+_MUSIC_BPM = 90            # tempo (beats per minute)
+_MUSIC_BEATS_PER_BAR = 4   # 4/4 time
+
+
+def _music_seconds(bars: int) -> float:
+    """The duration in seconds of ``bars`` bars at the music tempo."""
+    return bars * _MUSIC_BEATS_PER_BAR * 60.0 / _MUSIC_BPM
+
+
+def _pluck(freq, dur, sr, *, decay=6.0, harmonics=4):
+    """A plucked string/koto note: fast attack + exponential decay + harmonics.
+
+    A simple decaying-sine-with-harics model (a Karplus-Strong-style
+    approximation without the delay line -- the decaying harmonics give
+    the plucked timbre). Returns a float32 mono array.
+    """
+    n = int(sr * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / sr
+    wave = np.zeros(n, dtype=np.float32)
+    for h in range(1, harmonics + 1):
+        wave += (1.0 / h) * np.sin(2 * np.pi * freq * h * t)
+    # Fast attack (2ms) + exponential decay.
+    a = max(1, int(sr * 0.002))
+    env = np.ones(n, dtype=np.float32)
+    env[:a] = np.linspace(0, 1, a, dtype=np.float32)
+    env *= np.exp(-t * decay)
+    return wave * env
+
+
+def _taiko_hit(dur, sr, nrng=None):
+    """A taiko boom: a low sine thump + a noise burst with a fast decay.
+
+    ``nrng`` is an optional numpy Generator for deterministic noise (the
+    per-cycle seed). If None, the global numpy RNG is used.
+    """
+    n = int(sr * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / sr
+    # Low sine thump (60 Hz) with a fast pitch drop + decay.
+    thump = np.sin(2 * np.pi * 60 * t) * np.exp(-t * 12)
+    # Noise burst with a fast decay (the "body" of the drum).
+    if nrng is not None:
+        noise = nrng.standard_normal(n).astype(np.float32)
+    else:
+        noise = np.random.standard_normal(n).astype(np.float32)
+    noise *= np.exp(-t * 25)
+    m = float(np.max(np.abs(noise)) + 1e-9)
+    noise /= m
+    return thump * 0.7 + noise * 0.3
+
+
+def generate_music_segment(root_hz: float, bars: int = 4, *, seed: int | None = None):
+    """Generate a 4-bar ambient music segment keyed to ``root_hz``.
+
+    A slow drone (a low sustained note at ``root_hz`` / 2 with a slow
+    amplitude LFO) + a plucked koto-like melody (a random walk over the
+    pentatonic notes, re-rolled each cycle for non-repetition) + taiko
+    percussion (a low boom on the downbeats). Returns a stereo int16
+    NumPy array, or ``None`` if NumPy/pygame is unavailable (degrades
+    gracefully -- the caller checks for None).
+
+    ``seed`` is for deterministic generation within a cycle (the music
+    loop re-rolls each cycle so the melody doesn't repeat; the seed is
+    per-cycle, not global). If ``None``, the per-run RNG is used. The
+    seed drives BOTH the melodic random walk (a Python ``Random``) and
+    the percussion noise (a numpy ``default_rng``) so a given seed
+    reproduces the segment exactly.
+    """
+    try:
+        sr = _MUSIC_SR
+        dur = _music_seconds(bars)
+        n = int(sr * dur)
+        if n <= 0:
+            return None
+        t = np.arange(n) / sr
+        # Per-cycle RNGs: a Python Random for the melodic random walk +
+        # a numpy default_rng for the percussion noise (both seeded by
+        # ``seed`` so a given seed reproduces the segment exactly).
+        r = rng() if seed is None else __import__("random").Random(seed)
+        nrng = np.random.default_rng() if seed is None else np.random.default_rng(seed)
+
+        # --- Drone: a low sustained note at root_hz / 2 with a slow LFO ---
+        drone_freq = root_hz / 2.0
+        drone = np.sin(2 * np.pi * drone_freq * t)
+        # Slow amplitude LFO (0.1 Hz) so the drone breathes.
+        lfo = 0.5 + 0.5 * np.sin(2 * np.pi * 0.1 * t)
+        drone = drone * lfo * _DRONE_GAIN
+
+        # --- Melody: a random walk over the pentatonic notes ---
+        # The melody plays a note every beat; each note is a pluck with
+        # an exponential decay. A random walk over the pentatonic notes
+        # (re-rolled each cycle) gives a gentle, non-repeating melody.
+        beats_per_bar = _MUSIC_BEATS_PER_BAR
+        total_beats = bars * beats_per_bar
+        beat_dur = dur / total_beats
+        beat_n = int(sr * beat_dur)
+        melody = np.zeros(n, dtype=np.float32)
+        # The pentatonic notes relative to root_hz.
+        notes = [root_hz * ratio for ratio in _PENTATONIC_RATIOS]
+        # Random walk over the pentatonic notes (start at the root).
+        idx = 0
+        for b in range(total_beats):
+            # Pluck the current note.
+            note = _pluck(notes[idx], beat_dur * 1.5, sr,
+                         decay=5.0 + r.uniform(0, 2))
+            # Place it at the beat (with a small human timing jitter).
+            jitter = int(r.uniform(-0.05, 0.05) * sr)
+            start = b * beat_n + jitter
+            end = start + len(note)
+            if 0 <= start < n and end <= n:
+                melody[start:end] += note * _MELODY_GAIN
+            # Random walk: step up/down/stay in the pentatonic scale.
+            step = r.choice((-1, 0, 0, 1))
+            idx = max(0, min(len(notes) - 1, idx + step))
+
+        # --- Taiko percussion: a low boom on the downbeats ---
+        # A "downbeat" is beat 0 of each bar; the other beats are quiet
+        # or silent (a gentle, not driving, rhythm).
+        percussion = np.zeros(n, dtype=np.float32)
+        for b in range(total_beats):
+            if b % beats_per_bar == 0:
+                hit = _taiko_hit(0.25, sr, nrng=nrng)
+                start = b * beat_n
+                end = start + len(hit)
+                if end <= n:
+                    percussion[start:end] += hit * _PERCUSSION_GAIN
+
+        # --- Mix to stereo ---
+        mix = drone + melody + percussion
+        # Soft clip to avoid harsh peaks (the mix is already conservative).
+        mix = np.tanh(mix * 1.2) * 0.9
+        stereo = np.column_stack([mix, mix])
+        return (stereo * 32767).astype(np.int16)
+    except Exception:
+        # Degrade gracefully: return None (the caller checks for None).
+        return None
+
+
+def make_music_sound(root_hz: float, bars: int = 4, *, seed: int | None = None):
+    """Wrap a generated music segment in a ``pygame.Sound`` for playback.
+
+    Returns ``None`` if the mixer is unavailable or the segment fails to
+    generate (degrades gracefully -- no crash, no sound).
+    """
+    try:
+        if not pygame.mixer.get_init():
+            return None
+        arr = generate_music_segment(root_hz, bars=bars, seed=seed)
+        if arr is None:
+            return None
+        return pygame.sndarray.make_sound(arr)
+    except Exception:
+        return None
+
+
+def root_hz_for_zone(zone_index: int, zone_hue: int) -> float:
+    """Map a zone's hue to a base frequency for the ambient music.
+
+    The hue (0..360) is mapped to a frequency in a gentle range
+    (220..440 Hz, roughly A3 to A4) so the root note is always in a
+    pleasant register. The zone_index adds a slow drift so later zones
+    are slightly lower (darker) -- a subtle audio cue for progression.
+    """
+    # Hue -> frequency: map 0..360 to 220..440 Hz (A3 to A4).
+    base = 220.0 + (zone_hue % 360) / 360.0 * 220.0
+    # Slow drift: later zones are slightly lower (darker).
+    drift = -5.0 * (zone_index % 9)
+    return max(110.0, base + drift)
