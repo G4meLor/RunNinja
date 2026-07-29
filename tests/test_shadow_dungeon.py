@@ -284,6 +284,46 @@ def test_dungeon_exit_clears_active_flag(pygame_headless):
     assert state.dungeon_floor == 0
 
 
+def test_reset_for_ascension_clears_dungeon_state(pygame_headless):
+    """``Runner.reset_for_ascension`` clears the dungeon run-scoped state
+    (``dungeon_active``/``floor``/``type``/``seed``) but KEEPS the
+    ``dungeon_best_floor`` record.
+
+    Regression guard for the cross-cutting integration gap: ``ascend()``
+    and ``reincarnate()`` reset run-scoped state via
+    ``reset_for_ascension`` but never touched the dungeon fields, so a
+    prestige with an active dungeon left ``dungeon_active=True`` +
+    ``dungeon_floor=N`` on the save — the next session loaded with no
+    dungeon runner and the HUD drew "Floor N/5" indefinitely. The fix
+    resets the active-dungeon fields in ``reset_for_ascension`` (the
+    record ``dungeon_best_floor`` is persistent and must survive).
+    """
+    from core.state import GameState
+    from engine.runner import Runner, DungeonRunner
+    state = GameState()
+    state.medals = 100
+    # Enter a dungeon (sets dungeon_active + floor + type + seed).
+    dr = DungeonRunner(state)
+    dr.enter()
+    assert state.dungeon_active is True
+    assert state.dungeon_floor == 1
+    # Set a best-floor record so we can assert it survives the prestige.
+    state.dungeon_best_floor = 5
+    # The prestige path: reset_for_ascension (called by both
+    # ``_do_ascend`` and ``_do_reincarnate`` in screen_ascend.py).
+    runner = Runner(state)
+    runner.reset_for_ascension()
+    # The active-dungeon run-scoped state is cleared.
+    assert state.dungeon_active is False
+    assert state.dungeon_floor == 0
+    assert state.dungeon_type == "none"
+    assert state.dungeon_seed == 0
+    # The persistent record is kept (NOT reset).
+    assert state.dungeon_best_floor == 5, (
+        "reset_for_ascension cleared dungeon_best_floor (the record must "
+        "persist across prestiges)")
+
+
 def test_dungeon_floor_advances_on_boss_kill(pygame_headless):
     """Killing the dungeon boss advances dungeon_floor by 1 (the next
     floor). The dungeon is floor-based progression (not zone-based)."""

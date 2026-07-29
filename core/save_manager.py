@@ -125,6 +125,11 @@ _SCHEMA: dict[str, type] = {
     # value in a save file is flagged by the validator.
     "dungeon_best_floor": int,
     "cosmic_forge": int,
+    # pl-automation (Task 28): the auto-ascend threshold (the zone index
+    # at which auto-ascend fires; 0 = use the base ascend requirement).
+    # Type-checked here so a corrupted value in a save file is flagged by
+    # the validator (same class of guard as ``dungeon_best_floor``).
+    "auto_ascend_threshold": int,
     # cnt-quest-codex (Task 26): weekly + chapter quest state.
     "weekly_quests": list,
     "weekly_refresh": float,

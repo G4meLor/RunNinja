@@ -1145,7 +1145,14 @@ class GameScreen:
         # button opens the variant selector modal; the HUD shows the
         # current dungeon state (floor / variant) when a dungeon is active.
         self.btn_dungeon.draw(surf)
-        if state.dungeon_active:
+        # Guard on a live dungeon_runner reference too: after a prestige
+        # (ascension/reincarnation), ``reset_for_ascension`` clears
+        # ``state.dungeon_active`` but the stale ``self.game.dungeon_runner``
+        # reference is NOT cleared — the guard on ``dungeon_active`` keeps
+        # the HUD from drawing against the orphaned runner (no "Floor N/5"
+        # with no exit button after a prestige).
+        if (state.dungeon_active
+                and getattr(self.game, "dungeon_runner", None) is not None):
             self._draw_dungeon_hud(surf, state)
         # Task 34: the dungeon variant selector modal (an overlay drawn
         # over the game screen when ``dungeon_selector_open`` is True).

@@ -1464,6 +1464,17 @@ class Runner:
         # Task 31: clear the weather FX on ascension (the new run starts
         # in the village, weather "none" — the next tick re-syncs).
         self.weather_fx.particles.clear()
+        # Reset the dungeon run-scoped state on ascension/reincarnation.
+        # ``dungeon_best_floor`` is a persistent record (kept); the active
+        # dungeon run is abandoned (the DungeonRunner instance is orphaned
+        # by the prestige, so the state must not claim a dungeon is active).
+        # Without this, a save loaded after a prestige has
+        # ``dungeon_active=True`` + ``dungeon_floor=N`` but no dungeon
+        # runner — the HUD draws "Floor N/5" indefinitely with no exit.
+        self.state.dungeon_active = False
+        self.state.dungeon_floor = 0
+        self.state.dungeon_type = "none"
+        self.state.dungeon_seed = 0
 
 
 def _upgrade_pct(state: GameState, key: str) -> float:

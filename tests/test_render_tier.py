@@ -129,9 +129,11 @@ def test_main_particle_cap_reflects_tier(pygame_headless):
         f"max_particles {g.particles.max_particles} != "
         f"particle_mult({q}) * DEFAULT_MAX_PARTICLES = {expected}"
     )
-    # Cleanup: quit pygame so later tests can re-init.
-    import pygame
-    pygame.quit()
+    # NOTE: do NOT call ``pygame.quit()`` here. The session-scoped
+    # ``pygame_headless`` fixture (conftest.py) handles teardown at session
+    # end; a per-test ``pygame.quit()`` tears down the display mid-session
+    # and breaks later tests that need ``surf.convert_alpha()``
+    # (e.g. ``test_combo_window_skill_tree_bonus_is_read``).
 
 
 def test_main_particle_cap_low_under_reduced_motion(pygame_headless):
@@ -151,6 +153,4 @@ def test_main_particle_cap_low_under_reduced_motion(pygame_headless):
     # the same way main does (this is the wiring the test exercises).
     g.particles.max_particles = expected
     assert g.particles.max_particles == expected
-    # Cleanup.
-    import pygame
-    pygame.quit()
+    # NOTE: do NOT call ``pygame.quit()`` here (see the note above).

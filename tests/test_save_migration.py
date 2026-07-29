@@ -189,3 +189,25 @@ def test_import_save_wires_migration_for_v2_file():
         finally:
             _st.SAVE_FILE = orig_save_file
             _st.GameState.save = orig_save
+
+
+def test_every_state_field_is_in_save_schema():
+    """Every ``GameState`` dataclass field is a key in
+    ``save_manager._SCHEMA``.
+
+    Regression guard for the whole class of "field added to the dataclass
+    + migration but not the schema" bug (the Task 34
+    ``dungeon_best_floor`` and the Task 28 ``auto_ascend_threshold`` were
+    both this bug: a corrupted value passed ``validate_save`` silently).
+    ``GameState.__dataclass_fields__`` is the source of truth for the
+    fields the live state serializes; ``_SCHEMA`` is the type-check map
+    ``validate_save`` walks. The two must cover the same set of fields so
+    a corrupted value in any field is flagged.
+    """
+    from core.state import GameState
+    from core import save_manager
+    state_fields = set(GameState.__dataclass_fields__)
+    schema_fields = set(save_manager._SCHEMA)
+    missing = state_fields - schema_fields
+    assert not missing, (
+        f"State fields missing from _SCHEMA: {sorted(missing)}")
