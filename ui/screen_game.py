@@ -37,6 +37,65 @@ _GOLD_COUNT_DUR = 0.8
 # frame (pinned to 0 when reduced_motion is on or the render tier is low).
 PARALLAX_OFFSETS = (0.0, 0.15, 0.35, 0.6, 1.0)
 
+# Task 32 (gfx-outline-shading-squash): squash-and-stretch parameters.
+# The squash plays for ~80ms on slash/hit, driven by the existing
+# ``slash_anim`` (initial 0.15s) and ``last_damage_timer`` (initial 0.6s)
+# timers. The peak squash is 12% (k=0.12), so the sprite scales to
+# (1.12, 0.88) at the peak and decays back to (1.0, 1.0) over 80ms.
+_SQUASH_PEAK = 0.12
+_SQUASH_DUR = 0.08  # 80ms
+# The slash/hit timer initial values (the values the timers are reset to
+# when a slash/hit fires). Used to compute the elapsed time since the
+# slash/hit (elapsed = initial - current).
+_SLASH_TIMER_INITIAL = 0.15
+_HIT_TIMER_INITIAL = 0.6
+
+
+def squash_factor(slash_anim: float = 0.0, last_damage_timer: float = 0.0,
+                  reduced_motion: bool = False) -> float:
+    """The squash-and-stretch factor k for the current frame.
+
+    Returns 0.0 when there is no squash (at rest, or after the 80ms
+    squash window, or when ``reduced_motion`` is on). The sprite scales
+    to (1+k, 1-k) — wider + shorter — so the squash reads as an impact
+    (the ninja compresses on the slash/hit, then springs back).
+
+    The squash is driven by the existing ``slash_anim`` / ``last_damage_timer``
+    timers (no new state). The elapsed time since the slash/hit is
+    ``initial - current`` (the timers count down from the initial value);
+    the squash decays linearly from the peak to 0 over ``_SQUASH_DUR``
+    (80ms). Hit takes priority over slash (the ninja recoils when hit
+    mid-slash).
+
+    Gated by ``reduced_motion`` (the squash is a visual flourish; the
+    slash/hit frame selection from the sprite sheet is the non-visual
+    cue for reduced_motion players). The screen also gates on the
+    render tier (low tier -> no squash); the tier gate is applied by the
+    caller (the screen passes ``reduced_motion=not anim_enabled`` where
+    ``anim_enabled = parallax_enabled(quality)``, so the low tier
+    disables the squash the same way it disables parallax).
+    """
+    if reduced_motion:
+        return 0.0
+    # Hit takes priority over slash (the ninja recoils when hit
+    # mid-slash; the hit squash is the recoil, the slash squash is the
+    # lunge compress).
+    if last_damage_timer > 0:
+        elapsed = _HIT_TIMER_INITIAL - last_damage_timer
+    elif slash_anim > 0:
+        elapsed = _SLASH_TIMER_INITIAL - slash_anim
+    else:
+        return 0.0
+    if elapsed < 0:
+        elapsed = 0.0
+    if elapsed >= _SQUASH_DUR:
+        return 0.0
+    # Linear decay from the peak to 0 over _SQUASH_DUR. Clamp tiny
+    # floating-point residuals to 0 so the squash is exactly 0 at the
+    # end of the window (no subpixel squash that the player can't see).
+    k = _SQUASH_PEAK * (1.0 - elapsed / _SQUASH_DUR)
+    return k if k > 1e-6 else 0.0
+
 
 def _approach(current: float, target: float, max_delta: float) -> float:
     """Move ``current`` toward ``target`` by at most ``max_delta``."""
@@ -378,6 +437,15 @@ class GameScreen:
         # Pin to frame 0 when ``reduced_motion`` (or the low render tier,
         # which reduced_motion forces) so the animation is disabled for
         # accessibility.
+        # Task 32 (gfx-outline-shading-squash): the enemy squash-and-
+        # stretch scales (1+k, 1-k) for ~80ms on hit, driven by the
+        # existing ``last_damage_timer`` (the enemy recoils when hit).
+        # Gated by the same tier path as the sprite-sheet animation (low
+        # tier disables both); the reduced_motion gate is never bypassed.
+        # The squash is applied per-frame with ``smoothscale`` (the
+        # outline + shading are cache-time, zero per-frame cost; the
+        # squash is per-frame because it's a transient animation driven
+        # by the hit timer).
         from assets import enemy_frame
         from core.quality import parallax_enabled
         # The sprite-sheet animation is gated on the same tier path as
@@ -392,6 +460,16 @@ class GameScreen:
             ex = int(e.x) + ox
             ey = ly + 8 + oy
             e.y = ey
+            # Task 32: squash-and-stretch on hit. The squash scales
+            # (1+k, 1-k) for ~80ms after the hit (the enemy recoils).
+            # Gated by the tier (low tier / reduced_motion -> no squash).
+            k_enemy = squash_factor(last_damage_timer=e.last_damage_timer,
+                                   reduced_motion=not anim_enabled)
+            if k_enemy > 0:
+                ew, eh = es.get_size()
+                es = pygame.transform.smoothscale(
+                    es, (max(1, int(ew * (1 + k_enemy))),
+                          max(1, int(eh * (1 - k_enemy)))))
             if not e.alive:
                 fade = max(0.0, (e.last_damage_timer + 0.3) / 0.3)
                 es = es.copy()
@@ -450,12 +528,33 @@ class GameScreen:
         # screen's vertical bob (math.sin(bob * 4) * 2) is kept as the
         # positional bob — the frame selection adds the in-sprite pose
         # on top of the positional bob, so the two compose.
+        # Task 32 (gfx-outline-shading-squash): the ninja squash-and-
+        # stretch scales (1+k, 1-k) for ~80ms on slash/hit, driven by
+        # the existing ``slash_anim`` / ``last_damage_timer`` timers.
+        # Gated by the same tier path as the sprite-sheet animation (low
+        # tier disables both); the reduced_motion gate is never bypassed.
+        # The squash is applied per-frame with ``smoothscale`` (the
+        # outline + shading are cache-time, zero per-frame cost; the
+        # squash is per-frame because it's a transient animation driven
+        # by the slash/hit timers).
         from assets import ninja_frame
         from core.quality import parallax_enabled
         anim_enabled = parallax_enabled(state.effective_render_quality())
         ns = ninja_frame(72, runner.ninja.slash_anim, runner.ninja.bob,
                          last_damage_timer=runner.ninja.last_damage_timer,
                          reduced_motion=not anim_enabled)
+        # Task 32: squash-and-stretch on slash/hit. The squash scales
+        # (1+k, 1-k) for ~80ms after the slash/hit (the ninja compresses
+        # on the slash lunge / hit recoil, then springs back). Gated by
+        # the tier (low tier / reduced_motion -> no squash).
+        k_ninja = squash_factor(slash_anim=runner.ninja.slash_anim,
+                               last_damage_timer=runner.ninja.last_damage_timer,
+                               reduced_motion=not anim_enabled)
+        if k_ninja > 0:
+            nw, nh = ns.get_size()
+            ns = pygame.transform.smoothscale(
+                ns, (max(1, int(nw * (1 + k_ninja))),
+                      max(1, int(nh * (1 - k_ninja)))))
         bob = math.sin(runner.ninja.bob * 4) * 2
         nx = 180 + ox
         ny = ly - 30 + bob + oy

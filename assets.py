@@ -9,6 +9,7 @@ import math
 import colorsys
 from typing import Tuple
 
+import numpy as np
 import pygame
 
 import config as cfg
@@ -18,6 +19,137 @@ from utils import rng
 def hsl(h: int, s: float, l: float) -> Tuple[int, int, int]:
     r, g, b = colorsys.hls_to_rgb((h % 360) / 360.0, l, s)
     return int(r * 255), int(g * 255), int(b * 255)
+
+
+# === Outline + shading ramp (Task 32 / gfx-outline-shading-squash) ===
+# Two cheap, high-impact graphics upgrades applied at CACHE TIME (zero
+# per-frame cost):
+#
+# 1. ``outline_array(surf)`` — a vectorized 1px alpha-dilation outline.
+#    The "looks like real pixel art" trick: a dark 1px ring around each
+#    sprite so it reads against any background. The outline is the
+#    dilation of the alpha channel by 1px (the 4-neighbors), minus the
+#    original mask (the ring around the sprite). The original sprite is
+#    blitted on top of the outline so the sprite covers the inner part
+#    and the outline shows as a 1px ring.
+#
+# 2. ``apply_shading_ramp(surf, steps=5)`` — a 4-6 step hue-shifted
+#    shading ramp. Shadows shift hue cool (toward blue), highlights warm
+#    (toward red/orange). The ramp is computed from the sprite's
+#    luminance range (quantized to N levels); each level gets a hue
+#    shift in RGB space (cool = more blue/less red, warm = more
+#    red/less blue). Applied in-place to the surface's RGB (the alpha is
+#    unchanged).
+#
+# Both are applied at cache-miss time (before ``convert_alpha``), so the
+# per-frame blit cost is identical to the unprocessed sprite (the outline
+# + shading are baked into the cached surface). The squash-and-stretch
+# (Task 32, part 3) is applied per-frame in ``ui.screen_game`` (gated by
+# ``reduced_motion``); the outline + shading are NOT gated by
+# ``reduced_motion`` (they are static cache-time enhancements, not motion).
+
+
+def outline_array(surf: pygame.Surface) -> pygame.Surface:
+    """Build a 1px alpha-dilation outline around the sprite.
+
+    The "looks like real pixel art" trick: a dark 1px ring around the
+    sprite so it reads against any background. The outline is the
+    dilation of the alpha channel by 1px (the 4-neighbors), minus the
+    original mask (the ring around the sprite). The original sprite is
+    blitted on top of the outline so the sprite covers the inner part
+    and the outline shows as a 1px ring.
+
+    Vectorized with numpy (the alpha channel is read into an array, the
+    dilation is a shift-and-OR, the outline mask is written back to a
+    fresh surface). Returns a new SRCALPHA surface (the original is
+    unchanged); the caller caches the result.
+
+    The outline is applied at CACHE TIME (zero per-frame cost) — the
+    cached sprite has the outline baked in.
+    """
+    w, h = surf.get_size()
+    # Read the alpha channel as a numpy array (W, H).
+    alpha = pygame.surfarray.array_alpha(surf).astype(np.uint8)
+    mask = (alpha > 0).astype(np.uint8)
+    # Dilate by 1px (4-neighbors): a pixel is "on" if any of its 4
+    # neighbors (or itself) is on. This is a shift-and-OR in each
+    # direction.
+    dilated = mask.copy()
+    dilated[1:] |= mask[:-1]    # shift right
+    dilated[:-1] |= mask[1:]    # shift left
+    dilated[:, 1:] |= mask[:, :-1]  # shift down
+    dilated[:, :-1] |= mask[:, 1:]  # shift up
+    # Outline = dilated - original (the ring around the sprite).
+    outline_mask = dilated & ~mask
+    # Build the outline surface: dark color at the outline pixels,
+    # transparent elsewhere.
+    out = pygame.Surface((w, h), pygame.SRCALPHA)
+    if outline_mask.any():
+        rgb = pygame.surfarray.pixels3d(out)
+        a = pygame.surfarray.pixels_alpha(out)
+        rgb[outline_mask.astype(bool)] = (20, 20, 30)
+        a[outline_mask.astype(bool)] = 255
+        del rgb, a  # release the locked surface
+    # Blit the original sprite on top (the sprite covers the inner
+    # part; the outline shows as a 1px ring around the sprite).
+    out.blit(surf, (0, 0))
+    return out
+
+
+def apply_shading_ramp(surf: pygame.Surface, steps: int = 5) -> pygame.Surface:
+    """Apply a 4-6 step hue-shifted shading ramp to the sprite.
+
+    Shadows shift hue cool (toward blue), highlights warm (toward
+    red/orange). The ramp is computed from the sprite's luminance range
+    (quantized to N levels); each level gets a hue shift in RGB space
+    (cool = more blue/less red, warm = more red/less blue). Applied
+    in-place to the surface's RGB (the alpha is unchanged).
+
+    The ramp is applied at CACHE TIME (zero per-frame cost) — the cached
+    sprite has the ramp baked in.
+
+    ``steps`` is the number of ramp levels (4-6 per the brief; default 5).
+    """
+    w, h = surf.get_size()
+    # Read the RGB + alpha as numpy arrays (copies, not views).
+    rgb = pygame.surfarray.array3d(surf).astype(np.float32)
+    alpha = pygame.surfarray.array_alpha(surf).astype(np.float32)
+    mask = alpha > 0
+    if not mask.any():
+        return surf  # nothing to shade
+    # Compute per-pixel luminance (Rec. 601).
+    lum = (0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2])
+    opaque_lum = lum[mask]
+    lo, hi = float(opaque_lum.min()), float(opaque_lum.max())
+    if hi <= lo:
+        return surf  # flat luminance; no ramp
+    # Quantize to N levels (0..steps-1) based on the luminance range.
+    t = (lum - lo) / (hi - lo)  # 0..1
+    level = (t * (steps - 1)).astype(np.int32).clip(0, steps - 1)
+    # Hue shift per level: level 0 (darkest) -> cool (toward blue),
+    # level steps-1 (brightest) -> warm (toward red/orange). The shift
+    # is (level - mid) * 15, so for 5 steps: -30, -15, 0, +15, +30.
+    mid = (steps - 1) / 2.0
+    shift = (level - mid) * 15.0
+    # Apply: red += shift (warm = more red), blue -= shift (cool = more
+    # blue). Green is slightly reduced at the extremes for a more
+    # natural ramp (so the warm end is red/orange, not yellow; the cool
+    # end is blue, not cyan).
+    rgb_out = rgb.copy()
+    rgb_out[:, :, 0] = np.where(
+        mask, (rgb[:, :, 0] + shift).clip(0, 255), rgb[:, :, 0])
+    rgb_out[:, :, 2] = np.where(
+        mask, (rgb[:, :, 2] - shift).clip(0, 255), rgb[:, :, 2])
+    rgb_out[:, :, 1] = np.where(
+        mask, (rgb[:, :, 1] - np.abs(shift) * 0.3).clip(0, 255), rgb[:, :, 1])
+    # Write back to the surface's RGB only (preserve the alpha channel).
+    # ``pixels3d`` returns a view that locks the surface for in-place
+    # RGB writes — unlike ``blit_array``, it does NOT touch the alpha
+    # channel, so the sprite's transparency is preserved.
+    rgb_view = pygame.surfarray.pixels3d(surf)
+    rgb_view[:] = rgb_out.astype(np.uint8)
+    del rgb_view  # release the locked surface
+    return surf
 
 
 # === Ninja ===
@@ -118,6 +250,10 @@ def ninja_surface(size: int = 64) -> pygame.Surface:
     and the skill-FX afterimage all read this single-sprite API. The
     sprite is frame 0 of the sprite sheet (the static fallback), so the
     two never diverge.
+
+    Task 32 (gfx-outline-shading-squash): the outline + shading ramp are
+    applied at cache time (before ``convert_alpha``), so the cached
+    sprite has the outline + shading baked in (zero per-frame cost).
     """
     cached = _NINJA_CACHE.get(size)
     if cached is not None:
@@ -125,6 +261,10 @@ def ninja_surface(size: int = 64) -> pygame.Surface:
     # Frame 0 is the static sprite; build it once and cache it.
     surf = pygame.Surface((size, size), pygame.SRCALPHA)
     _draw_ninja_frame(surf, size, _NINJA_FRAME_IDLE)
+    # Task 32: apply the outline + shading ramp at cache time (before
+    # convert_alpha) so the cached sprite has them baked in.
+    apply_shading_ramp(surf)
+    surf = outline_array(surf)
     surf = surf.convert_alpha()
     _NINJA_CACHE[size] = surf
     return surf
@@ -148,16 +288,29 @@ def ninja_sprite_sheet(size: int = 64) -> pygame.Surface:
     per-frame selection (``ninja_frame``) is a zero-copy ``subsurface``
     view, so the per-frame blit cost is identical to the static sprite
     (same pixel count, same format, no allocation).
+
+    Task 32 (gfx-outline-shading-squash): the outline + shading ramp are
+    applied per frame at cache time. Each frame is drawn on its own
+    surface, the outline + shading are applied, and the frame is blitted
+    onto the sheet — this keeps the outline within each frame's bounds
+    (the outline does not bleed across frame boundaries, which it would
+    if the outline were applied to the whole sheet at once).
     """
     cached = _NINJA_SHEET_CACHE.get(size)
     if cached is not None:
         return cached
     sheet = pygame.Surface((size * _NINJA_FRAME_COUNT, size), pygame.SRCALPHA)
     for i in range(_NINJA_FRAME_COUNT):
-        _draw_ninja_frame(sheet, size, i)
-        # The frame is already on the sheet (no per-frame surface); the
-        # border between frames is implicit (each frame occupies
-        # [i*size, (i+1)*size) horizontally).
+        # Task 32: draw each frame on its own surface, apply the outline
+        # + shading ramp, then blit onto the sheet. This keeps the
+        # outline within each frame's bounds (the outline is a 1px ring
+        # around the sprite; if applied to the whole sheet, the ring
+        # would bleed across frame boundaries).
+        frame = pygame.Surface((size, size), pygame.SRCALPHA)
+        _draw_ninja_frame(frame, size, i)
+        apply_shading_ramp(frame)
+        frame = outline_array(frame)
+        sheet.blit(frame, (i * size, 0))
     sheet = sheet.convert_alpha()
     _NINJA_SHEET_CACHE[size] = sheet
     return sheet
@@ -307,6 +460,10 @@ def enemy_surface(edef, size: int = 48) -> pygame.Surface:
     Kept for backward compatibility — the bestiary / death-FX / silhouette
     screens all read this single-sprite API. The sprite is frame 0 of
     the sprite sheet (the static fallback), so the two never diverge.
+
+    Task 32 (gfx-outline-shading-squash): the outline + shading ramp are
+    applied at cache time (before ``convert_alpha``), so the cached
+    sprite has the outline + shading baked in (zero per-frame cost).
     """
     key = (getattr(edef, "id", str(edef)), size)
     cached = _ENEMY_CACHE.get(key)
@@ -314,6 +471,9 @@ def enemy_surface(edef, size: int = 48) -> pygame.Surface:
         return cached
     surf = pygame.Surface((size, size), pygame.SRCALPHA)
     _draw_enemy_frame(surf, edef, size, 0, _enemy_frame_count(edef))
+    # Task 32: apply the outline + shading ramp at cache time.
+    apply_shading_ramp(surf)
+    surf = outline_array(surf)
     surf = surf.convert_alpha()
     _ENEMY_CACHE[key] = surf
     return surf
@@ -328,6 +488,11 @@ def enemy_sprite_sheet(edef, size: int = 48) -> pygame.Surface:
     (edef id, size); the sheet is built once at cache-miss time and the
     per-frame selection (``enemy_frame``) is a zero-copy ``subsurface``
     view, so the per-frame blit cost is identical to the static sprite.
+
+    Task 32 (gfx-outline-shading-squash): the outline + shading ramp are
+    applied per frame at cache time (each frame is drawn on its own
+    surface, the outline + shading are applied, and the frame is blitted
+    onto the sheet — this keeps the outline within each frame's bounds).
     """
     key = (getattr(edef, "id", str(edef)), size)
     cached = _ENEMY_SHEET_CACHE.get(key)
@@ -336,7 +501,14 @@ def enemy_sprite_sheet(edef, size: int = 48) -> pygame.Surface:
     frame_count = _enemy_frame_count(edef)
     sheet = pygame.Surface((size * frame_count, size), pygame.SRCALPHA)
     for i in range(frame_count):
-        _draw_enemy_frame(sheet, edef, size, i, frame_count)
+        # Task 32: draw each frame on its own surface, apply the outline
+        # + shading ramp, then blit onto the sheet (keeps the outline
+        # within each frame's bounds).
+        frame = pygame.Surface((size, size), pygame.SRCALPHA)
+        _draw_enemy_frame(frame, edef, size, i, frame_count)
+        apply_shading_ramp(frame)
+        frame = outline_array(frame)
+        sheet.blit(frame, (i * size, 0))
     sheet = sheet.convert_alpha()
     _ENEMY_SHEET_CACHE[key] = sheet
     return sheet
@@ -395,6 +567,12 @@ def firefly_surface(size: int = 10, hue: int = 60) -> pygame.Surface:
         s.blit(glow, (cx - r, cx - r))
     pygame.draw.circle(s, col, (cx, cx), size // 2 + 1)
     pygame.draw.circle(s, (255, 255, 255), (cx, cx), max(1, size // 3))
+    # Task 32 (gfx-outline-shading-squash): apply the shading ramp at
+    # cache time (the outline is skipped for the firefly — the firefly
+    # is a soft glow, not a hard sprite; a 1px outline would clash with
+    # the soft glow halo. The shading ramp still applies so the core
+    # reads as warm).
+    apply_shading_ramp(s)
     s = s.convert_alpha()
     _FIREFLY_CACHE[key] = s
     return s
@@ -430,6 +608,9 @@ def building_surface(bid: str, size: int = 48) -> pygame.Surface:
             y = cy - 6 + i * 8
             pygame.draw.rect(surf, wall, (cx - w // 2, y, w, 6))
             pygame.draw.polygon(surf, roof, [(cx - w // 2 - 2, y), (cx + w // 2 + 2, y), (cx, y - 6)])
+    # Task 32: apply the outline + shading ramp at cache time.
+    apply_shading_ramp(surf)
+    surf = outline_array(surf)
     surf = surf.convert_alpha()
     _BUILDING_CACHE[key] = surf
     return surf
@@ -452,6 +633,9 @@ def pet_surface(pid: str, hue: int, size: int = 40) -> pygame.Surface:
     pygame.draw.circle(surf, col, (cx + 10, cy - 8), 5)
     pygame.draw.circle(surf, (20, 20, 30), (cx - 5, cy - 2), 2)
     pygame.draw.circle(surf, (20, 20, 30), (cx + 5, cy - 2), 2)
+    # Task 32: apply the outline + shading ramp at cache time.
+    apply_shading_ramp(surf)
+    surf = outline_array(surf)
     surf = surf.convert_alpha()
     _PET_CACHE[key] = surf
     return surf
