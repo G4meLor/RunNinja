@@ -65,6 +65,32 @@ def can_ascend(state: GameState) -> bool:
     return state.zone_index >= ascend_requirement(state)
 
 
+def should_auto_ascend(state: GameState) -> bool:
+    """Whether auto-ascend should fire this tick (Task 28 / pl-automation).
+
+    True when:
+    1. ``auto_ascend`` is unlocked (in ``state.skill_tree``), AND
+    2. ``can_ascend(state)`` is True (the base requirement is met), AND
+    3. ``state.zone_index >= state.auto_ascend_threshold`` (the player's
+       threshold is met; 0 means use the base requirement -- auto-ascend
+       fires as soon as ``can_ascend`` is True).
+
+    The threshold is RESPECTED -- the player sets it and the auto-ascend
+    only fires when the threshold is met. A player who wants to push
+    deeper before auto-ascending sets a higher threshold; the auto-ascend
+    waits until the threshold is reached. The threshold is an ADDITIONAL
+    gate on top of the base ascend requirement, so the player can never
+    auto-ascend below the base requirement (the threshold only delays).
+    """
+    if "auto_ascend" not in state.skill_tree:
+        return False
+    if not can_ascend(state):
+        return False
+    if state.auto_ascend_threshold > 0 and state.zone_index < state.auto_ascend_threshold:
+        return False
+    return True
+
+
 def elixir_gain(state: GameState) -> int:
     """Elixir that would be earned by ascending right now.
 

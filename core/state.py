@@ -132,6 +132,7 @@ class GameState:
     high_contrast: bool = False     # high-contrast palette toggle (pl-accessibility)
     seen_hints: list[str] = field(default_factory=list)  # dismissed hint ids (pl-hints-nav-tooltips)
     cosmic_forge: int = 0           # persistent reincarnation anchor, max 10 (gp-reincarnation-perks)
+    auto_ascend_threshold: int = 0  # zone index at which auto-ascend fires (0 = use base requirement) (pl-automation)
 
     # -----------------------------------------------------------------
     # Render-quality tier
@@ -310,6 +311,9 @@ def _migrate_v2_to_v3(d: dict) -> dict:
     d.setdefault("seen_hints", [])
     # gp-reincarnation-perks
     d.setdefault("cosmic_forge", 0)
+    # pl-automation (Task 28): the auto-ascend threshold (the zone index
+    # at which auto-ascend fires; 0 = use the base ascend requirement).
+    d.setdefault("auto_ascend_threshold", 0)
     # cnt-quest-codex (Task 26): weekly + chapter quest state. Seeded
     # with the same defaults the dataclass uses so a v2 save loaded under
     # v3+ code has the fields the weekly/chapter logic expects.

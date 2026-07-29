@@ -123,6 +123,15 @@ RHYTHM_BONUS_PER_LEVEL: float = 0.025  # +2.5% tap damage per level
 # The synergy arc display lifetime (seconds). The screen draws a glowing
 # arc between the two skill buttons while this timer is > 0.
 SYNERGY_ARC_DUR: float = 1.0
+# Farm-when-stuck (Task 28 / pl-automation): when stuck on a boss for this
+# many seconds (with ``auto_progress`` unlocked), the runner enters farm
+# mode -- the road keeps earning gold (from buildings + kills) instead of
+# dead-ending. Tuned so a boss that takes > 30s to kill triggers farm mode
+# (the player is "stuck"). The farm mode is a flag the UI can read (to show
+# "Farming..." instead of "Stuck!"). The gold earning already happens
+# through the normal tick (buildings + kills); farm mode is the explicit
+# signal that the road is farming while stuck, not a separate earning path.
+FARM_STUCK_THRESHOLD: float = 30.0
 # The element node id -> element name (the unlock gate for a fusion pair).
 _GODAI_ELEMENT_NODES: dict[str, str] = {
     "godai_void":  "void",
@@ -200,6 +209,16 @@ class Runner:
         self.last_skill_time: float = 0.0
         self.last_synergy: str | None = None
         self._synergy_arc_timer: float = 0.0
+        # Task 28 / pl-automation: farm-when-stuck tracking.
+        # ``_boss_stuck_timer`` counts how long the current boss has been
+        # alive (reset when no boss is active). When the timer exceeds
+        # ``FARM_STUCK_THRESHOLD`` (with ``auto_progress`` unlocked), the
+        # runner enters ``farm_mode`` -- the road keeps earning gold
+        # (from buildings + kills) instead of dead-ending. ``farm_mode``
+        # is a flag the UI can read (to show "Farming..." instead of
+        # "Stuck!").
+        self._boss_stuck_timer: float = 0.0
+        self.farm_mode: bool = False
         self.bus.on("enemy_dmg", self._on_enemy_dmg)
         self.bus.on("ninja_dmg", self._on_ninja_dmg)
         self.bus.on("boss_spawn", self._on_boss_spawn)
@@ -683,6 +702,68 @@ class Runner:
         # (Recompute lazily; cheap.)
         self.state.energy_max = 600.0 + evo.get("energy_timer", 0.0)
 
+        # -----------------------------------------------------------------
+        # Task 28 / pl-automation: automation nodes (auto-cast, auto-firefly,
+        # auto-energy, auto-ascend, farm-when-stuck). These are gated behind
+        # deep elixir investment (high-cost skill-tree nodes) -- an earned
+        # endgame convenience, not available to new players. The automation
+        # block runs after the energy section so the energy state is current;
+        # the skills tick (above) is before so the cooldowns are current; the
+        # fireflies update (above) is before so the fireflies are current.
+        # -----------------------------------------------------------------
+        # Auto-cast: if auto_cast unlocked + energy active, auto-fire Rope
+        # Hook + Shuriken when off cooldown. The auto-cast uses the same
+        # ``activate_skill`` path so synergies + skill_dmg apply (the auto-
+        # cast is a reward for deep investment, not a separate code path).
+        if "auto_cast" in self.state.skill_tree and self.state.energy_active:
+            if "rope" in self.skills and can_fire(self.skills["rope"]):
+                self.activate_skill("rope")
+            if "shuriken" in self.skills and can_fire(self.skills["shuriken"]):
+                self.activate_skill("shuriken")
+        # Auto-firefly: if auto_firefly unlocked, auto-catch all fireflies.
+        # The auto-catch awards the same gold a manual ``tap_at`` would
+        # (the firefly multipliers + combo apply), so auto_firefly is a
+        # convenience, not a bonus.
+        if "auto_firefly" in self.state.skill_tree:
+            self._auto_catch_fireflies()
+        # Auto-energy: if auto_energy unlocked + energy available + not
+        # active + not locked out, auto-activate Energy. The ``toggle_energy``
+        # call activates Energy (the conditions for activation are met).
+        if ("auto_energy" in self.state.skill_tree
+                and not self.state.energy_active
+                and self.state.energy_lockout <= 0
+                and self.state.energy > 0):
+            self.toggle_energy()
+        # Auto-ascend: if auto_ascend unlocked + at the player's threshold,
+        # auto-ascend (respecting the player's threshold). The ascend
+        # resets the state; ``reset_for_ascension`` resets the runner's
+        # world + transient state. The threshold is respected -- the
+        # player sets it and the auto-ascend only fires when the threshold
+        # is met (see ``core.ascend.should_auto_ascend``).
+        from core.ascend import should_auto_ascend
+        if should_auto_ascend(self.state):
+            from core.ascend import ascend
+            gained = ascend(self.state)
+            if gained > 0:
+                self.reset_for_ascension()
+                self.notify(f"Auto-ascended! +{gained} elixir", (150, 80, 220))
+        # Farm-when-stuck: track how long the current boss has been alive.
+        # When the timer exceeds ``FARM_STUCK_THRESHOLD`` (with
+        # ``auto_progress`` unlocked), the runner enters farm mode -- the
+        # road keeps earning gold (from buildings + kills, which already
+        # happen through the normal tick) instead of dead-ending. The farm
+        # mode is a flag the UI can read. When the boss is killed (no boss
+        # alive), the timer resets + farm mode is cleared.
+        boss_alive = any(e.is_boss and e.alive for e in self.world.enemies)
+        if boss_alive:
+            self._boss_stuck_timer += dt
+        else:
+            self._boss_stuck_timer = 0.0
+            self.farm_mode = False
+        if ("auto_progress" in self.state.skill_tree
+                and self._boss_stuck_timer >= FARM_STUCK_THRESHOLD):
+            self.farm_mode = True
+
         # Ninja respawn.
         if not self.ninja.alive:
             self.ninja.alive = True
@@ -1127,6 +1208,32 @@ class Runner:
             self.notify("Auto Katana engaged!", (130, 230, 160))
 
     # -----------------------------------------------------------------
+    # Task 28 / pl-automation: auto-firefly (auto-catch all fireflies)
+    # -----------------------------------------------------------------
+    def _auto_catch_fireflies(self) -> None:
+        """Auto-catch all fireflies (the ``auto_firefly`` node).
+
+        Catches every firefly in the world (no position check -- auto-catch
+        catches all). The gold awarded is the same a manual ``tap_at``
+        would award (the firefly multipliers + combo apply), so
+        ``auto_firefly`` is a convenience, not a bonus. The fireflies are
+        removed from the world + the firefly-catch FX fire.
+        """
+        if not self.world.fireflies:
+            return
+        evo = aggregate_bonuses(self.state)
+        in_cycle = self.state.zone_index % 9
+        for f in self.world.fireflies[:]:
+            gold = catch_firefly(f, base_gold=50 * (1 + in_cycle * 0.5),
+                                  combo_mult=self.combo_mult(),
+                                  firefly_gold_mult=1.0 + evo.get("firefly_gold", 0.0),
+                                  firefly_value_mult=1.0 + evo.get("firefly_value", 0.0))
+            self._award_gold(gold)
+            self.state.fireflies_today += 1
+            self.firefly_fx.on_catch(f.x, f.y, gold)
+        self.world.fireflies.clear()
+
+    # -----------------------------------------------------------------
     # Combo Finishers
     # -----------------------------------------------------------------
     def activate_finisher(self, fid: str) -> None:
@@ -1251,6 +1358,10 @@ class Runner:
         self._synergy_arc_timer = 0.0
         self._rhythm_taps = []
         self.state.rhythm_streak = 0
+        # Task 28: reset the farm-when-stuck tracking on ascension
+        # (transient -- the new run starts fresh; the boss is gone).
+        self._boss_stuck_timer = 0.0
+        self.farm_mode = False
         # Clear all FX.
         self.fx.texts.clear()
         self.death_fx.fx.clear()

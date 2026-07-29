@@ -29,6 +29,13 @@ OFFLINE_EFFICIENCY = 0.6     # offline runs at 60% of online rate
 # what the player would earn playing actively with their current combo
 # + gold multipliers. AWAY_CAP < 1.0 so the cap is always strict.
 AWAY_CAP = 0.9
+# Farm-when-stuck (Task 28 / pl-automation): when the player has
+# ``auto_progress`` unlocked, the road keeps earning gold while stuck on
+# a boss (farm mode). This is the farm bonus for the offline case -- the
+# extra gold earned while the player is away + stuck. The farm bonus is a
+# small fraction of the active earning rate, representing the road farming
+# while the player is away (the road never dead-ends an idle player).
+FARM_BONUS = 0.10  # 10% extra gold while farming (auto_progress)
 
 
 def compute(state: GameState) -> dict:
@@ -88,6 +95,15 @@ def compute(state: GameState) -> dict:
                                            + evo.get("coin_token_pct", 0.0))
 
     uncapped = gold_from_buildings + gold_from_kills
+    # Farm-when-stuck (Task 28 / pl-automation): when the player has
+    # ``auto_progress`` unlocked, the road keeps earning gold while stuck
+    # on a boss (farm mode). This is the farm bonus for the offline case --
+    # the extra gold earned while the player is away + stuck. The farm
+    # bonus is a small fraction of the active earning rate, so it stacks
+    # additively with the normal offline gold (the farm gold is subject to
+    # the Away Mastery cap, so the total stays strictly below active
+    # earnings -- the cap is the whole point of Away Mastery).
+    uncapped += farm_when_stuck(state, elapsed)
     if uncapped <= 0:
         return _empty()
 
@@ -201,3 +217,30 @@ def format_duration(seconds: int) -> str:
         return f"{m}m {s}s"
     h, m = divmod(m, 60)
     return f"{h}h {m}m"
+
+
+def farm_when_stuck(state: GameState, elapsed: float) -> float:
+    """Farm gold earned while stuck on a boss (Task 28 / pl-automation).
+
+    When the player has ``auto_progress`` unlocked, the road keeps earning
+    gold while stuck on a boss (farm mode). This function computes the
+    farm gold for the offline case -- the extra gold earned while the
+    player is away + stuck. The farm gold is a bonus on top of the normal
+    offline gold (the buildings + kills gold), representing the road
+    farming while the player is away (the road never dead-ends an idle
+    player; the farm state advances ``lifetime_gold``).
+
+    The farm gold is a small fraction (``FARM_BONUS`` = 10%) of the active
+    earning rate times the elapsed time. The active earning rate is the
+    same value ``core.offline.active_per_sec`` computes (the player's
+    current active earnings), so the farm gold scales with the player's
+    build (a deeper build earns more while farming).
+
+    Returns 0.0 when the player doesn't have ``auto_progress`` unlocked
+    (the farm-when-stuck is an earned endgame convenience, not available
+    to new players).
+    """
+    if "auto_progress" not in state.skill_tree:
+        return 0.0
+    gps = active_per_sec(state)
+    return gps * elapsed * FARM_BONUS

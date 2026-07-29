@@ -229,6 +229,32 @@ _EXTRA_NODES = [
      "tap_pct", 0.12, "+12% tap damage. Requires combo tier 3 (cross-branch)."),
     ("capstone_def_combo", "Iron Flow", "defense", 250, "offense_t3",
      "def_pct", 0.10, "+10% defense. Requires offense tier 3 (cross-branch)."),
+    # --- Task 28: automation nodes (auto-cast, auto-firefly, auto-energy,
+    # auto-ascend, auto-progress) — gated behind deep elixir investment
+    # (high cost). These are an earned endgame convenience, not available
+    # to new players. The nodes are spread across the relevant branches
+    # (abilities, firefly, energy, elixir) with high costs + deep prereqs
+    # so a player needs significant elixir investment before unlocking.
+    # Auto-cast: auto-fire Rope Hook + Shuriken under Energy. Requires the
+    # abilities branch deep enough to have Rope Hook (ab_rope, which itself
+    # requires ab_shuriken -> ab_kunai -> ab_root).
+    ("auto_cast", "Auto Cast", "abilities", 800, "ab_rope",
+     "auto_cast", 1.0, "Auto-fire Rope Hook + Shuriken under Energy."),
+    # Auto-firefly: auto-collect all fireflies. Requires the firefly branch.
+    ("auto_firefly", "Auto Firefly", "firefly", 600, "fly_root",
+     "auto_firefly", 1.0, "Auto-collect all fireflies."),
+    # Auto-energy: auto-activate Energy when available. Requires the
+    # energy branch.
+    ("auto_energy", "Auto Energy", "energy", 700, "eng_root",
+     "auto_energy", 1.0, "Auto-activate Energy when available."),
+    # Auto-ascend: auto-ascend at the player's threshold. Requires deep
+    # elixir branch investment (elixir_t3).
+    ("auto_ascend", "Auto Ascend", "elixir", 1000, "elixir_t3",
+     "auto_ascend", 1.0, "Auto-ascend at player's threshold."),
+    # Auto-progress: auto-progress + farm-when-stuck fallback. Requires
+    # deep elixir branch investment.
+    ("auto_progress", "Auto Progress", "elixir", 900, "elixir_t3",
+     "auto_progress", 1.0, "Auto-progress + farm-when-stuck."),
 ]
 
 
