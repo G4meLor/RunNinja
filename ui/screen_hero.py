@@ -64,13 +64,26 @@ class HeroScreen:
                                 color=(90, 60, 130))
         self.buttons = [self.btn_back, self.btn_forge]
         self._ninja_big: pygame.Surface | None = None  # cached scaled sprite
-        # Forge panel state: per-slot action buttons + the Amber-Shop
-        # (buy_legendary) buttons. The buttons are rebuilt each draw (the
-        # slot set is static, but the enabled state depends on the live
-        # gold/amber + the piece's value).
+        # Forge panel state. The per-slot action buttons are CACHED on
+        # ``self._forge_btns`` and rebuilt only when the gear/currency state
+        # that affects their ``enabled`` flag changes (see
+        # ``_rebuild_forge_buttons``). The cache is essential: a fresh
+        # ``Button`` has ``pressed=False``, so if ``handle`` rebuilt the
+        # buttons on every event, the MOUSEBUTTONDOWN that sets
+        # ``pressed=True`` and the MOUSEBUTTONUP that checks ``pressed``
+        # would hit different objects and the click would never fire (the
+        # DOWN button is discarded before UP arrives). Caching the buttons
+        # for the lifetime of a single gear/currency state keeps the
+        # DOWN+UP pair on the same object so ``on_click`` fires.
         self._forge_open: bool = False
-        # Per-slot row rectangles (for click hit-testing outside Button).
-        self._forge_slot_rects: dict[str, pygame.Rect] = {}
+        self._forge_btns: list[Button] = []
+        # Snapshot of the state used to build ``_forge_btns`` (the gear
+        # dict + gold + amber). When the live state diverges from the
+        # snapshot, ``_rebuild_forge_buttons`` rebuilds the buttons. The
+        # snapshot is a tuple of (gear-tuple, gold, amber) -- the gear
+        # dict is frozen as a tuple of (slot, affix, value, rarity) tuples
+        # so it is hashable + comparable.
+        self._forge_btn_state: tuple | None = None
 
     # -----------------------------------------------------------------
     # Public API
@@ -79,17 +92,24 @@ class HeroScreen:
         for b in self.buttons:
             b.handle(event)
         # Forge panel: per-slot action buttons (enhance/reroll/salvage +
-        # buy_legendary). The buttons are rebuilt each draw and stored on
-        # the screen so ``handle`` can dispatch clicks.
+        # buy_legendary). The buttons are cached on ``self._forge_btns``
+        # (rebuilt only when the gear/currency state changes) so the
+        # MOUSEBUTTONDOWN + MOUSEBUTTONUP pair hits the same Button object
+        # and ``on_click`` fires.
         if self._forge_open:
-            for b in self._forge_buttons():
+            for b in self._forge_btns:
                 b.handle(event)
 
     def update(self, dt):
         for b in self.buttons:
             b.update(dt)
         if self._forge_open:
-            for b in self._forge_buttons():
+            # Rebuild the forge buttons if the state that affects their
+            # ``enabled`` flag has changed (e.g. the player spent gold and
+            # can no longer afford Enhance). The rebuild is cheap (16
+            # buttons) and only happens when the snapshot diverges.
+            self._maybe_rebuild_forge_buttons()
+            for b in self._forge_btns:
                 b.update(dt)
 
     def draw(self, surf):
@@ -113,13 +133,16 @@ class HeroScreen:
         self._draw_tier_ladder(surf, state)
         self._draw_equipped_pets(surf, state)
         if self._forge_open:
+            # Rebuild the forge buttons if the state has changed (so the
+            # drawn buttons match the live enabled state), then draw the
+            # panel chrome + the buttons.
+            self._maybe_rebuild_forge_buttons()
             self._draw_forge_panel(surf, state)
+            for b in self._forge_btns:
+                b.draw(surf)
 
         for b in self.buttons:
             b.draw(surf)
-        if self._forge_open:
-            for b in self._forge_buttons():
-                b.draw(surf)
 
     # -----------------------------------------------------------------
     # Source breakdown
@@ -449,54 +472,102 @@ class HeroScreen:
     # no combat). The Amber-Shop is a complementary amber sink INSIDE this
     # system (same module, same ``state.gear`` data model), not a separate
     # layer.
+    #
+    # Layout constants: shared between ``_rebuild_forge_buttons`` (which
+    # positions the per-slot action buttons) and ``_draw_forge_panel``
+    # (which draws the panel chrome + the per-slot rows). The two methods
+    # read the same constants so the buttons always align with the rows.
+    _FORGE_PANEL_RECT = (40, 100, 1200, 460)
+    _FORGE_ROW_H = 80
+    _FORGE_ROW_Y0 = 156  # panel.y (100) + 56 (below the header)
+
     def _toggle_forge(self):
         self._forge_open = not self._forge_open
+        # Clear the cache so the next ``update``/``draw`` rebuilds the
+        # buttons for the new panel state (fresh buttons have
+        # ``pressed=False``, so a toggle mid-click does not leave a stale
+        # ``pressed=True`` on a discarded button).
+        self._forge_btns = []
+        self._forge_btn_state = None
 
-    def _forge_buttons(self) -> list[Button]:
-        """Build the per-slot action buttons (rebuilt each draw so the
-        enabled state tracks the live gold/amber + the piece's value).
+    def _forge_state_snapshot(self) -> tuple:
+        """A hashable snapshot of the state that affects the forge buttons'
+        ``enabled`` flags.
+
+        The snapshot is ``(gear-tuple, gold, amber)`` where ``gear-tuple``
+        is a tuple of ``(slot, affix, value, rarity)`` tuples sorted by
+        slot. The snapshot is used by ``_maybe_rebuild_forge_buttons`` to
+        detect when the live state has diverged from the state the cached
+        buttons were built for (e.g. the player spent gold and can no
+        longer afford Enhance, or a boss drop added a new piece).
+        """
+        state = self.game.state
+        gear_tuple = tuple(
+            (slot, g.get("affix"), g.get("value"), g.get("rarity"))
+            for slot, g in state.gear.items()
+        )
+        return (gear_tuple, state.gold, state.amber)
+
+    def _maybe_rebuild_forge_buttons(self) -> None:
+        """Rebuild ``self._forge_btns`` if the gear/currency state has
+        changed since the last build.
+
+        The rebuild is cheap (16 buttons) and only happens when the
+        snapshot diverges, so the per-frame cost is a tuple comparison +
+        a list rebuild only when the state actually changed. The buttons
+        are cached for the lifetime of a single gear/currency state so the
+        MOUSEBUTTONDOWN + MOUSEBUTTONUP pair hits the same Button object
+        and ``on_click`` fires (a fresh button has ``pressed=False``, so
+        rebuilding on every event would break the DOWN+UP contract).
+        """
+        snap = self._forge_state_snapshot()
+        if snap == self._forge_btn_state:
+            return  # state unchanged -- keep the cached buttons
+        self._forge_btn_state = snap
+        self._forge_btns = self._build_forge_buttons()
+
+    def _build_forge_buttons(self) -> list[Button]:
+        """Build the per-slot action buttons for the current state.
 
         Four buttons per slot: Enhance (gold), Reroll (amber), Salvage
         (amber back), and Buy Legendary (amber, the Amber-Shop). The
-        buttons are stored on the screen so ``handle`` can dispatch clicks
-        before the next draw rebuilds them.
+        buttons are positioned by the shared layout constants (``_FORGE_*``)
+        so they align with the rows drawn by ``_draw_forge_panel``. The
+        ``enabled`` flag on each button reflects the current state (a
+        piece must exist for Enhance/Reroll/Salvage; the player must be
+        able to afford the gold/amber cost).
         """
         state = self.game.state
         buttons: list[Button] = []
-        # The panel layout: 4 slot rows, each with a label + 4 action
-        # buttons. The buttons are positioned by the same layout as
-        # ``_draw_forge_panel`` so they align with the drawn rows.
-        panel = pygame.Rect(40, 100, 1200, 460)
-        row_h = 80
-        y0 = panel.y + 56  # below the panel header
+        px, py, pw, ph = self._FORGE_PANEL_RECT
         for i, slot in enumerate(cfg.GEAR_SLOTS):
-            y = y0 + i * row_h
+            y = self._FORGE_ROW_Y0 + i * self._FORGE_ROW_H
             g = state.gear.get(slot)
             # Enhance: gold sink, enabled if the slot has a piece + the
             # piece is not maxed + the player can afford the gold cost.
             can_enhance = (g is not None
                            and g.get("value", 0.0) < cfg.FORGE_ENHANCE_MAX_VALUE
                            and state.gold >= cfg.FORGE_ENHANCE_GOLD)
-            btn_enh = Button((panel.x + 280, y + 16, 130, 44), "Enhance",
+            btn_enh = Button((px + 280, y + 16, 130, 44), "Enhance",
                              on_click=lambda s=slot: self._do_enhance(s),
                              enabled=can_enhance, color=(150, 110, 60))
             # Reroll: amber sink, enabled if the slot has a piece + the
             # player can afford the amber cost.
             can_reroll = (g is not None
                           and state.amber >= cfg.FORGE_REROLL_AMBER)
-            btn_reroll = Button((panel.x + 420, y + 16, 130, 44), "Reroll",
+            btn_reroll = Button((px + 420, y + 16, 130, 44), "Reroll",
                                 on_click=lambda s=slot: self._do_reroll(s),
                                 enabled=can_reroll, color=(90, 60, 130))
             # Salvage: returns amber, enabled if the slot has a piece.
             can_salvage = g is not None
-            btn_salv = Button((panel.x + 560, y + 16, 130, 44), "Salvage",
+            btn_salv = Button((px + 560, y + 16, 130, 44), "Salvage",
                               on_click=lambda s=slot: self._do_salvage(s),
                               enabled=can_salvage, color=(120, 60, 60))
             # Buy Legendary (Amber-Shop): amber sink, enabled if the player
             # can afford the amber cost. Replaces any existing piece in the
             # slot (one piece per slot).
             can_buy = state.amber >= cfg.FORGE_LEGENDARY_AMBER
-            btn_buy = Button((panel.x + 700, y + 16, 180, 44),
+            btn_buy = Button((px + 700, y + 16, 180, 44),
                              "Buy Legendary",
                              on_click=lambda s=slot: self._do_buy_legendary(s),
                              enabled=can_buy, color=(180, 120, 60))
@@ -536,11 +607,15 @@ class HeroScreen:
 
         Each row shows the slot's current piece (affix + value + rarity)
         and the 4 action buttons (Enhance / Reroll / Salvage / Buy
-        Legendary). The buttons themselves are drawn by ``_forge_buttons``
-        (called from ``draw``); this method draws the panel chrome + the
-        piece info so the buttons align with the rows.
+        Legendary). The buttons themselves are cached on
+        ``self._forge_btns`` (built by ``_build_forge_buttons`` and drawn
+        from ``draw``); this method draws the panel chrome + the piece
+        info so the buttons align with the rows. The layout constants
+        (``_FORGE_PANEL_RECT``, ``_FORGE_ROW_H``, ``_FORGE_ROW_Y0``) are
+        shared with ``_build_forge_buttons`` so the two never diverge.
         """
-        panel = pygame.Rect(40, 100, 1200, 460)
+        px, py, pw, ph = self._FORGE_PANEL_RECT
+        panel = pygame.Rect(px, py, pw, ph)
         draw_panel(surf, panel, fill=C.panel, border=C.panel_border)
         draw_text(surf, "Gear Forge",
                   (panel.x + 14, panel.y + 6), font_md(bold=True), C.gold)
@@ -550,19 +625,18 @@ class HeroScreen:
                   (panel.x + 160, panel.y + 8), font_xs(), C.text_dim)
 
         # Currency pills (gold + amber) so the player can see the sinks.
-        px = panel.right - 240
-        py = panel.y + 8
-        currency_pill(surf, px, py, "Gold", format_number(state.gold),
+        cpx = panel.right - 240
+        cpy = panel.y + 8
+        currency_pill(surf, cpx, cpy, "Gold", format_number(state.gold),
                       C.gold)
-        currency_pill(surf, px + 130, py, "Amber", str(state.amber),
+        currency_pill(surf, cpx + 130, cpy, "Amber", str(state.amber),
                       (255, 180, 60))
 
         # Per-slot rows.
-        row_h = 80
-        y0 = panel.y + 56
         for i, slot in enumerate(cfg.GEAR_SLOTS):
-            y = y0 + i * row_h
-            r = pygame.Rect(panel.x + 14, y, panel.w - 28, row_h - 8)
+            y = self._FORGE_ROW_Y0 + i * self._FORGE_ROW_H
+            r = pygame.Rect(panel.x + 14, y, panel.w - 28,
+                            self._FORGE_ROW_H - 8)
             draw_panel(surf, r, fill=C.panel_lo, border=C.panel_border)
             # Slot label.
             draw_text(surf, slot.capitalize(),

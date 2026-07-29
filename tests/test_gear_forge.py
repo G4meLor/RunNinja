@@ -472,3 +472,216 @@ def test_hero_screen_forge_buttons_for_each_slot(pygame_headless):
     # The screen iterates over GEAR_SLOTS (all 4 slots have forge buttons).
     assert "GEAR_SLOTS" in src or "gear_slots" in src.lower(), (
         "HeroScreen does not iterate over GEAR_SLOTS")
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL: forge buttons must actually respond to clicks. A fresh Button
+# has pressed=False; if the buttons were rebuilt on every event, the
+# MOUSEBUTTONDOWN (which sets pressed=True) and the MOUSEBUTTONUP (which
+# checks pressed) would hit different Button objects and the click would
+# never fire. This test simulates a real DOWN+UP pair on a forge button
+# rect and asserts the state changed -- the exact gap that let the
+# rebuild-on-every-event bug ship.
+# ---------------------------------------------------------------------------
+def test_forge_enhance_button_click_responds(pygame_headless):
+    """Clicking the Enhance button in the open Forge panel sinks gold +
+    increases the piece's value."""
+    import pygame
+    import main
+    g = main.Game()
+    screen = g.screens["hero"]
+    state = g.state
+    # Set up: a piece in the blade slot + enough gold to enhance.
+    state.gear = {"blade": {"affix": "tap_pct", "value": 0.1, "rarity": "rare"}}
+    state.gold = 1_000_000
+    state.amber = 1_000
+    # Open the Forge panel + rebuild the buttons for the current state.
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    # Find the Enhance button for the blade slot (first slot, first button
+    # in the row: the buttons are built in order Enhance, Reroll, Salvage,
+    # Buy Legendary per slot, so index 0 is blade's Enhance).
+    btn = screen._forge_btns[0]
+    assert btn.label == "Enhance", f"first forge button is {btn.label!r}, expected 'Enhance'"
+    assert btn.enabled, "Enhance button is disabled with sufficient gold + a non-maxed piece"
+    rect = btn.rect
+    center = rect.center
+    # Simulate a real click: MOUSEBUTTONDOWN followed by MOUSEBUTTONUP at
+    # the same point. The button must retain pressed=True across the two
+    # events (the cache is what makes this work -- a fresh button would
+    # have pressed=False on the UP event and the click would not fire).
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                              {"pos": center, "button": 1})
+    up = pygame.event.Event(pygame.MOUSEBUTTONUP,
+                            {"pos": center, "button": 1})
+    gold_before = state.gold
+    value_before = state.gear["blade"]["value"]
+    screen.handle(down)
+    # The button is pressed after the DOWN event (same object, cached).
+    assert btn.pressed is True, (
+        "button.pressed is False after MOUSEBUTTONDOWN -- the button was "
+        "rebuilt between events (the cache is broken)")
+    screen.handle(up)
+    # The click fired: gold sank + the piece's value increased.
+    assert state.gold < gold_before, (
+        f"gold unchanged after Enhance click: {gold_before} -> {state.gold} "
+        "(the on_click did not fire)")
+    assert state.gear["blade"]["value"] > value_before, (
+        f"blade value unchanged after Enhance click: {value_before} -> "
+        f"{state.gear['blade']['value']}")
+
+
+def test_forge_reroll_button_click_responds(pygame_headless):
+    """Clicking the Reroll button in the open Forge panel sinks amber."""
+    import pygame
+    import main
+    from utils import seed
+    seed(42)
+    g = main.Game()
+    screen = g.screens["hero"]
+    state = g.state
+    state.gear = {"blade": {"affix": "tap_pct", "value": 0.1, "rarity": "rare"}}
+    state.gold = 1_000_000
+    state.amber = 1_000
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    # Reroll is the 2nd button in the blade row (index 1).
+    btn = screen._forge_btns[1]
+    assert btn.label == "Reroll", f"2nd forge button is {btn.label!r}"
+    assert btn.enabled
+    center = btn.rect.center
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                              {"pos": center, "button": 1})
+    up = pygame.event.Event(pygame.MOUSEBUTTONUP,
+                            {"pos": center, "button": 1})
+    amber_before = state.amber
+    screen.handle(down)
+    assert btn.pressed is True
+    screen.handle(up)
+    assert state.amber < amber_before, (
+        f"amber unchanged after Reroll click: {amber_before} -> {state.amber}")
+
+
+def test_forge_salvage_button_click_responds(pygame_headless):
+    """Clicking the Salvage button in the open Forge panel returns amber +
+    removes the piece."""
+    import pygame
+    import main
+    g = main.Game()
+    screen = g.screens["hero"]
+    state = g.state
+    state.gear = {"blade": {"affix": "tap_pct", "value": 0.1, "rarity": "rare"}}
+    state.gold = 1_000_000
+    state.amber = 1_000
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    # Salvage is the 3rd button in the blade row (index 2).
+    btn = screen._forge_btns[2]
+    assert btn.label == "Salvage", f"3rd forge button is {btn.label!r}"
+    assert btn.enabled
+    center = btn.rect.center
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                              {"pos": center, "button": 1})
+    up = pygame.event.Event(pygame.MOUSEBUTTONUP,
+                            {"pos": center, "button": 1})
+    amber_before = state.amber
+    screen.handle(down)
+    assert btn.pressed is True
+    screen.handle(up)
+    assert "blade" not in state.gear, (
+        f"blade still in gear after Salvage click: {state.gear}")
+    assert state.amber > amber_before, (
+        f"amber did not increase after Salvage: {amber_before} -> {state.amber}")
+
+
+def test_forge_buy_legendary_button_click_responds(pygame_headless):
+    """Clicking the Buy Legendary button in the open Forge panel sinks amber
+    + adds a legendary piece."""
+    import pygame
+    import main
+    from utils import seed
+    seed(42)
+    g = main.Game()
+    screen = g.screens["hero"]
+    state = g.state
+    state.gear = {}
+    state.gold = 1_000_000
+    state.amber = 1_000
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    # Buy Legendary is the 4th button in the blade row (index 3).
+    btn = screen._forge_btns[3]
+    assert btn.label == "Buy Legendary", f"4th forge button is {btn.label!r}"
+    assert btn.enabled
+    center = btn.rect.center
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN,
+                              {"pos": center, "button": 1})
+    up = pygame.event.Event(pygame.MOUSEBUTTONUP,
+                            {"pos": center, "button": 1})
+    amber_before = state.amber
+    screen.handle(down)
+    assert btn.pressed is True
+    screen.handle(up)
+    assert state.amber < amber_before, (
+        f"amber unchanged after Buy Legendary click: {amber_before} -> {state.amber}")
+    assert "blade" in state.gear, "blade slot empty after Buy Legendary"
+    assert state.gear["blade"]["rarity"] == "legendary", (
+        f"blade rarity is {state.gear['blade']['rarity']}, not 'legendary'")
+
+
+def test_forge_buttons_cached_across_events(pygame_headless):
+    """The forge buttons are cached on self._forge_btns (not rebuilt on
+    every event) so the DOWN+UP pair hits the same Button object.
+
+    This is the regression test for the rebuild-on-every-event bug: a
+    fresh Button has pressed=False, so if handle() rebuilt the buttons on
+    every call, the MOUSEBUTTONDOWN that sets pressed=True and the
+    MOUSEBUTTONUP that checks pressed would hit different objects and the
+    click would never fire.
+    """
+    import main
+    g = main.Game()
+    screen = g.screens["hero"]
+    g.state.gear = {"blade": {"affix": "tap_pct", "value": 0.1, "rarity": "rare"}}
+    g.state.gold = 1_000_000
+    g.state.amber = 1_000
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    btns_before = list(screen._forge_btns)
+    # A second update call with the same state must NOT rebuild the
+    # buttons (the snapshot is unchanged). This is what keeps the
+    # DOWN+UP pair on the same object.
+    screen._maybe_rebuild_forge_buttons()
+    assert screen._forge_btns is not None
+    # The cached list is the same objects (identity, not just equality).
+    for a, b in zip(btns_before, screen._forge_btns):
+        assert a is b, (
+            "forge buttons were rebuilt with the same state -- the cache "
+            "is broken and the DOWN+UP pair will not fire on_click")
+
+
+def test_forge_buttons_rebuilt_when_state_changes(pygame_headless):
+    """The forge buttons are rebuilt when the gear/currency state changes
+    (so the enabled flags track the live state) -- but NOT on every event."""
+    import main
+    g = main.Game()
+    screen = g.screens["hero"]
+    g.state.gear = {"blade": {"affix": "tap_pct", "value": 0.1, "rarity": "rare"}}
+    g.state.gold = 1_000_000
+    g.state.amber = 1_000
+    screen._forge_open = True
+    screen._maybe_rebuild_forge_buttons()
+    btns_before = list(screen._forge_btns)
+    # Change the state (spend all the gold) -- the next rebuild must pick
+    # up the new state (Enhance is now disabled).
+    g.state.gold = 0
+    screen._maybe_rebuild_forge_buttons()
+    # The buttons were rebuilt (different objects).
+    rebuilt = any(a is not b for a, b in zip(btns_before, screen._forge_btns))
+    assert rebuilt, "forge buttons were not rebuilt after a state change"
+    # The Enhance button is now disabled (no gold).
+    enh = screen._forge_btns[0]
+    assert enh.label == "Enhance"
+    assert enh.enabled is False, (
+        "Enhance button is still enabled after gold went to 0 -- the "
+        "rebuild did not pick up the new state")
