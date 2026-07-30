@@ -75,6 +75,13 @@ class BuildingsScreen:
             self._build_buy_buttons()
 
     def handle(self, event):
+        # Wire UI click sounds: gate each button's click SFX on the
+        # player's sound setting. The buy buttons are built dynamically
+        # (rebuilt on selection / purchase), so set sound_on each handle
+        # call so they are gated on state.sound_on.
+        state = self.game.state
+        for b in self.buttons + self.buy_buttons:
+            b.sound_on = state.sound_on
         if self.list:
             self.list.handle(event)
         for b in self.buttons + self.buy_buttons:

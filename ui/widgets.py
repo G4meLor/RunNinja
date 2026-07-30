@@ -147,6 +147,11 @@ class StatBar:
 # Scrollable list (vertical)
 # ---------------------------------------------------------------------------
 class ScrollList:
+    # Drag-scroll: a press inside the list starts a potential drag; if the
+    # mouse moves more than a few px before release it is treated as a drag
+    # (scrolling the list) instead of a click-select. The click-select still
+    # fires on a press that does not move. A scrollbar indicator is drawn on
+    # the right edge when the list is scrollable (max_scroll > 0).
     def __init__(self, rect: pygame.Rect, items, item_h: int = 56):
         self.rect = pygame.Rect(rect)
         self.items = items            # list of dicts: {label, sub, color, icon, data}
@@ -156,6 +161,15 @@ class ScrollList:
         self.hover_index = -1
         self.selected_index = -1
         self.on_select = None
+        # Drag-scroll state. ``_dragging`` is True between a press inside the
+        # rect and the matching release; ``_drag_anchor_*`` records the press
+        # so MOUSEMOTION can compute the scroll delta; ``_drag_moved`` flags
+        # whether the motion exceeded the click threshold so the release
+        # suppresses the click-select.
+        self._dragging = False
+        self._drag_anchor_y = 0
+        self._drag_anchor_scroll = 0
+        self._drag_moved = False
 
     @property
     def max_scroll(self) -> int:
@@ -166,15 +180,41 @@ class ScrollList:
             if self.rect.collidepoint(pygame.mouse.get_pos()):
                 self.target_scroll -= event.y * 40
                 self.target_scroll = clamp(self.target_scroll, 0, self.max_scroll)
-        elif event.type == pygame.MOUSEMOTION:
-            self.hover_index = self._index_at(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # Start a potential drag BEFORE the click-select so motion is
+            # tracked. The click-select still fires here on a press; if the
+            # mouse later moves beyond the threshold, MOUSEBUTTONUP treats it
+            # as the end of a drag and the selection is left as-is.
+            if self.rect.collidepoint(event.pos):
+                self._dragging = True
+                self._drag_anchor_y = event.pos[1]
+                self._drag_anchor_scroll = self.target_scroll
+                self._drag_moved = False
             i = self._index_at(event.pos)
             if i is not None and 0 <= i < len(self.items):
                 self.selected_index = i
                 if self.on_select:
                     self.on_select(i, self.items[i])
                 return True
+        elif event.type == pygame.MOUSEMOTION:
+            self.hover_index = self._index_at(event.pos)
+            if self._dragging:
+                dy = event.pos[1] - self._drag_anchor_y
+                if abs(dy) > 4:
+                    self._drag_moved = True
+                self.target_scroll = clamp(
+                    self._drag_anchor_scroll - dy, 0, self.max_scroll)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self._dragging:
+                # If the mouse moved beyond the threshold this was a drag,
+                # not a click -- the click-select already fired on DOWN for a
+                # non-drag, so on a drag suppress the selection by returning
+                # False (the selection set on DOWN stands only if it wasn't a
+                # drag; for a drag we leave the selection as it was).
+                was_drag = self._drag_moved
+                self._dragging = False
+                if was_drag:
+                    return False
         return False
 
     def _index_at(self, pos) -> int | None:
@@ -188,6 +228,22 @@ class ScrollList:
 
     def update(self, dt: float) -> None:
         self.scroll += (self.target_scroll - self.scroll) * min(1.0, dt * 14)
+
+    def _draw_scrollbar(self, surf: pygame.Surface) -> None:
+        """Draw a track + thumb on the right edge when the list scrolls."""
+        if self.max_scroll <= 0:
+            return
+        track_x = self.rect.right - 8
+        track_w = 6
+        thumb_h = max(30, int(self.rect.h * self.rect.h / max(1, len(self.items) * self.item_h)))
+        thumb_y = self.rect.y + int((self.rect.h - thumb_h) * (self.scroll / max(1, self.max_scroll)))
+        # Track.
+        track_rect = pygame.Rect(track_x, self.rect.y, track_w, self.rect.h)
+        pygame.draw.rect(surf, C.panel_lo, track_rect)
+        pygame.draw.rect(surf, C.panel_border, track_rect, 1)
+        # Thumb.
+        thumb_rect = pygame.Rect(track_x, thumb_y, track_w, thumb_h)
+        pygame.draw.rect(surf, C.panel_border_hi, thumb_rect)
 
     def draw(self, surf: pygame.Surface) -> None:
         clip = surf.get_clip()
@@ -211,6 +267,8 @@ class ScrollList:
             if sub:
                 draw_text(surf, sub, (r.x + 24, r.y + 28), font_xs(), C.text_dim)
         surf.set_clip(clip)
+        # Scrollbar drawn AFTER restoring the clip so it stays visible.
+        self._draw_scrollbar(surf)
 
 
 # ---------------------------------------------------------------------------

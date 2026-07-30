@@ -123,6 +123,13 @@ class AscendScreen:
         pair hits the same Button object (same pattern as the forge
         buttons in screen_hero). Rebuilt when the soul_tree set or the
         souls balance changes.
+
+        The button label embeds a short description (``perk.desc``)
+        so the perk's effect is visible on the button itself -- this
+        replaces the separate perk-description block in ``draw()``,
+        which previously overlapped buttons 3 and 4 (the descriptions
+        were drawn at desc_y = soul_panel.y + 260 = 390, overlapping
+        the buttons at y=372 and y=428).
         """
         state = self.game.state
         snap = self._soul_btn_snapshot(state)
@@ -131,18 +138,36 @@ class AscendScreen:
         self._soul_btn_state = snap
         self._soul_btns = []
         from data.skill_tree import SOUL_TREE_PERKS
+        # The buttons are 348px wide and use ``font_md`` (default). The
+        # full ``perk.desc`` strings are too long to fit on one line
+        # alongside the name + cost, so use a short, human-readable
+        # summary per perk (the long ``perk.desc`` is the data source;
+        # these summaries are the button-facing label).
+        short_desc = {
+            "start_zone_3": "Start at zone 3",
+            "extra_equip_slot": "+1 equip slot",
+            "keep_skill_tree": "Keep 25%",
+            "fifth_active_skill": "5th active skill",
+        }
+        # The buttons are 348px wide. The combined "name - desc - cost"
+        # labels are too wide for the default bold font, so use the
+        # non-bold ``font_md`` (measured to fit all 4 perks at <=348px).
+        btn_font = font_md()
         for i, perk in enumerate(SOUL_TREE_PERKS):
             unlocked = perk.id in state.soul_tree
             can = (not unlocked) and state.souls >= perk.cost
-            # The button label shows the perk name + cost (or "Unlocked").
+            sd = short_desc.get(perk.id, perk.desc)
+            # The button label shows the perk name + a short description
+            # + the cost (or "Unlocked"). The short desc keeps the
+            # label readable inside the 348px button (font_md).
             if unlocked:
-                label = f"{perk.name} - Unlocked"
+                label = f"{perk.name} - {sd} - Unlocked"
                 enabled = False
             elif can:
-                label = f"{perk.name} ({perk.cost} souls)"
+                label = f"{perk.name} - {sd} ({perk.cost} souls)"
                 enabled = True
             else:
-                label = f"{perk.name} ({perk.cost} souls)"
+                label = f"{perk.name} - {sd} ({perk.cost} souls)"
                 enabled = False
             # Layout: a single column in the Soul Tree panel area. The
             # panel is at x=890, y=130, w=380, h=530. The grid starts at
@@ -153,6 +178,7 @@ class AscendScreen:
             bx = 906
             by = 260 + row * 56
             btn = Button((bx, by, 348, 48), label,
+                         font=btn_font,
                          on_click=lambda pid=perk.id: self._do_purchase_perk(pid),
                          enabled=enabled, color=(180, 120, 255))
             self._soul_btns.append(btn)
@@ -357,18 +383,14 @@ class AscendScreen:
                   C.text_dim)
         # The perk buttons are cached on ``self._soul_btns`` (built in
         # ``_maybe_rebuild_soul_buttons``); draw them after the panel
-        # chrome so they align with the rows.
+        # chrome so they align with the rows. The buttons embed the
+        # perk's short description in their label (see
+        # ``_maybe_rebuild_soul_buttons``), so no separate
+        # perk-description block is drawn here -- the previous block
+        # overlapped buttons 3 and 4 (desc_y = soul_panel.y + 260 = 390
+        # collided with the buttons at y=372 and y=428).
         for b in self._soul_btns:
             b.draw(surf)
-        # Perk descriptions (below the buttons).
-        from data.skill_tree import SOUL_TREE_PERKS
-        desc_y = soul_panel.y + 260
-        for i, perk in enumerate(SOUL_TREE_PERKS):
-            unlocked = perk.id in state.soul_tree
-            color = C.text_good if unlocked else C.text_dim
-            draw_text(surf, f"{perk.name}: {perk.desc}",
-                      (soul_panel.x + 16, desc_y + i * 22),
-                      font_xs(), color)
 
         for b in self.buttons:
             b.draw(surf)

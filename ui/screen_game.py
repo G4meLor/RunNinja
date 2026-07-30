@@ -113,24 +113,14 @@ class NavItem:
             surf.blit(temp, rect.topleft)
 
 
-# The 12 nav items grouped into 4 categories (Play / Manage / Collect / Meta).
-# Each tuple: (screen_id, label, icon_color, category).
+# The 3 primary nav items on the game-screen rail (Ascend / Hero / Menu).
+# Each tuple: (screen_id, label, icon_color). The rest of the screens live
+# on the Menu hub (ui/screen_menuhub.py); the "Menu" item opens the hub.
 _NAV_DEFS = [
-    ("ascend", "Ascend", (150, 80, 220), "Play"),
-    ("buildings", "Build", (120, 220, 200), "Manage"),
-    ("upgrades", "Upgr", (255, 205, 90), "Manage"),
-    ("skilltree", "Skill", (180, 130, 255), "Manage"),
-    ("pets", "Pets", (255, 160, 200), "Manage"),
-    ("quests", "Quest", (255, 240, 120), "Collect"),
-    ("records", "Recrd", (130, 200, 255), "Collect"),
-    ("bestiary", "Besti", (255, 120, 110), "Collect"),
-    ("cosmetics", "Cosm", (200, 160, 255), "Collect"),
-    ("godai", "Godai", (255, 90, 160), "Collect"),
-    ("hero", "Hero", (255, 180, 90), "Collect"),
-    ("settings", "Set", (160, 170, 200), "Meta"),
+    ("ascend", "Ascend", (150, 80, 220)),
+    ("hero", "Hero", (255, 180, 90)),
+    ("menuhub", "Menu", (200, 200, 220)),
 ]
-# The category order (left-to-right in the rail).
-_CATEGORIES = ["Play", "Manage", "Collect", "Meta"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +240,13 @@ class GameScreen:
             (cfg.WINDOW_W - 180, cfg.WINDOW_H - 60, 160, 44),
             "Auto Katana", on_click=self._toggle_energy,
         )
-        # Task 36 (pl-hints-nav-tooltips): the categorized icon rail
-        # replaces the 12 flat 64px text buttons. Each NavItem has an
-        # icon + a short label; the 12 items are grouped into 4
-        # categories (Play / Manage / Collect / Meta) with dividers.
+        # Task 36 (pl-hints-nav-tooltips): the primary nav rail (3
+        # NavItems: Ascend / Hero / Menu). The rest of the screens live on
+        # the Menu hub (ui/screen_menuhub.py); the "Menu" item opens it.
         # ``_nav_by_screen`` maps screen_id -> NavItem for the hint glow.
         self.nav_items: list[NavItem] = []
         self._nav_by_screen: dict[str, NavItem] = {}
-        self._nav_dividers: list[tuple[int, int]] = []  # (x, height) divider lines
+        self._nav_dividers: list[tuple[int, int]] = []  # no categories -> empty
         self._build_nav()
         # The hint engine + the current hint (evaluated per frame in
         # update). The gate (not welcome_pending and not zone_fx.active)
@@ -324,60 +313,52 @@ class GameScreen:
         # gold milestone (1k / 10k / 100k / ...) is crossed. The previous
         # gold value is tracked so the screen can detect the crossing.
         self._prev_gold: float = 0.0
+        # The "Exit Dungeon" button (drawn inside the dungeon HUD panel
+        # when a dungeon is active). Lets the player abandon any dungeon
+        # (including Endless) — the dungeon HUD previously had no exit
+        # affordance. The button calls ``_exit_dungeon`` which exits the
+        # dungeon runner + clears the reference on the game.
+        # The Exit button sits next to the relocated dungeon HUD panel
+        # (top-right of the road, panel at x=WINDOW_W-216..WINDOW_W-16).
+        # The panel's right edge is at WINDOW_W-16 (no room to the right
+        # before the window edge), so the Exit button is placed to the
+        # panel's LEFT (in the clear upper-road area, above the enemy lane
+        # at y~274). Vertically centered against the 56px panel.
+        self._dungeon_panel_x = cfg.WINDOW_W - 216
+        self.btn_dungeon_exit = Button(
+            (self._dungeon_panel_x - 80 - 8, cfg.HUD_H + 8 + 16, 80, 24),
+            "Exit", on_click=self._exit_dungeon, color=(80, 80, 100),
+        )
 
     def _build_nav(self) -> None:
-        """Build the categorized icon rail (12 NavItems in 4 categories).
+        """Build the 3-button primary rail (Ascend / Hero / Menu).
 
-        The rail is a single row at y=8, right-aligned (rightmost button's
-        right edge at WINDOW_W - 8). Each button is 60x30 with a 4px gap
-        within a category and a 6px gap (with a 2px vertical divider line)
-        between categories. The items are laid out left-to-right within
-        each category (Play → Manage → Collect → Meta).
+        The rail is a single row at y=10, right-aligned (rightmost button's
+        right edge at WINDOW_W - 8). Each button is 120x40 with an 8px gap.
+        The items are laid out left-to-right (Ascend, Hero, Menu). The
+        rest of the screens live on the Menu hub (opened by the "Menu"
+        item); the categorized 12-button rail is retired.
         """
-        y = 8
-        w = 60
-        h = 30
-        gap_in = 4       # gap within a category
-        gap_out = 6      # gap between categories (divider sits in here)
-        # Group the nav defs by category (in category order).
-        by_cat: dict[str, list] = {}
-        for screen_id, label, icon_color, cat in _NAV_DEFS:
-            by_cat.setdefault(cat, []).append((screen_id, label, icon_color))
-        # Compute the total rail width so we can right-align the start.
-        total_w = 0
-        for ci, cat in enumerate(_CATEGORIES):
-            items = by_cat.get(cat, [])
-            n = len(items)
-            if n == 0:
-                continue
-            total_w += n * w + (n - 1) * gap_in
-            if ci > 0:
-                total_w += gap_out
+        y = 10
+        w = 120
+        h = 40
+        gap = 8
+        # Rail width = 3*120 + 2*8 = 376; left edge = WINDOW_W - 8 - 376.
+        total_w = len(_NAV_DEFS) * w + (len(_NAV_DEFS) - 1) * gap
         x = cfg.WINDOW_W - 8 - total_w
-        # Lay out left-to-right (Play → Manage → Collect → Meta).
+        # Lay out left-to-right (Ascend, Hero, Menu).
         self.nav_items = []
         self._nav_by_screen = {}
-        self._nav_dividers = []
-        stagger_idx = 0
-        for ci, cat in enumerate(_CATEGORIES):
-            items = by_cat.get(cat, [])
-            if not items:
-                continue
-            if ci > 0:
-                # Divider: 2px vertical line centered in the 6px gap.
-                divider_x = x - gap_out // 2 - 1
-                self._nav_dividers.append((divider_x, h))
-                x += gap_out
-            for i, (screen_id, label, icon_color) in enumerate(items):
-                if i > 0:
-                    x += gap_in
-                cb = (lambda sid=screen_id: self._nav_click(sid))
-                item = NavItem((x, y, w, h), screen_id, label, icon_color,
-                               cb, stagger_idx=stagger_idx)
-                self.nav_items.append(item)
-                self._nav_by_screen[screen_id] = item
-                stagger_idx += 1
-                x += w
+        self._nav_dividers = []  # no categories -> no dividers
+        for i, (screen_id, label, icon_color) in enumerate(_NAV_DEFS):
+            if i > 0:
+                x += gap
+            cb = (lambda sid=screen_id: self._nav_click(sid))
+            item = NavItem((x, y, w, h), screen_id, label, icon_color,
+                           cb, stagger_idx=i)
+            self.nav_items.append(item)
+            self._nav_by_screen[screen_id] = item
+            x += w
 
     def _nav_click(self, screen_id: str) -> None:
         """Handle a nav-item click: switch screen + dismiss the hint.
@@ -517,6 +498,19 @@ class GameScreen:
         from assets import play
         play("skill", state.sound_on)
 
+    def _exit_dungeon(self) -> None:
+        """Exit the active dungeon (abandon any variant, including Endless).
+
+        Calls the dungeon runner's ``exit`` (which records the best floor +
+        clears ``state.dungeon_active``) and clears the runner reference on
+        the game so the main loop stops ticking it. The road resumes normally
+        (it was never disturbed — it kept idling while the dungeon was active).
+        """
+        dr = getattr(self.game, "dungeon_runner", None)
+        if dr is not None:
+            dr.exit()
+            self.game.dungeon_runner = None
+
     def _build_skill_buttons(self) -> None:
         self.skill_buttons = []
         # Track the skill id for each button so the synergy arc can find
@@ -605,6 +599,11 @@ class GameScreen:
         self.btn_energy.handle(event)
         # Task 34: the dungeon entry button (opens the variant selector).
         self.btn_dungeon.handle(event)
+        # The "Exit Dungeon" button (handled only when a dungeon is active;
+        # the button is drawn inside the dungeon HUD panel).
+        if (self.game.state.dungeon_active
+                and getattr(self.game, "dungeon_runner", None) is not None):
+            self.btn_dungeon_exit.handle(event)
 
     def update(self, dt: float) -> None:
         for b in self.skill_buttons + self.finisher_buttons:
@@ -635,10 +634,14 @@ class GameScreen:
         self.btn_dungeon.enabled = gate_met
         for b in self.dungeon_variant_buttons:
             b.update(dt)
-            # The "Close" button is always enabled; the variant buttons
-            # are enabled only when the gate is met.
-            if b is not self.dungeon_variant_buttons[0]:
-                b.enabled = gate_met
+            # The "Close" button (the last one in the list, appended after
+            # the variant loop in _build_dungeon_variant_buttons) is ALWAYS
+            # enabled so the player can dismiss the selector even when the
+            # entry gate is not met (the modal-trap fix). The variant
+            # buttons (indices 0-2) are gated by the entry gate.
+            if b is self.dungeon_variant_buttons[-1]:
+                continue  # Close always enabled
+            b.enabled = gate_met
         # If the dungeon is active, tick the dungeon runner alongside the
         # road (the road keeps idling). The dungeon runner is stored on
         # the game; the main loop ticks the road runner, the screen ticks
@@ -647,6 +650,8 @@ class GameScreen:
                 and hasattr(self.game, "dungeon_runner")
                 and self.game.dungeon_runner is not None):
             self.game.dungeon_runner.update(dt)
+            # Update the Exit Dungeon button (drawn inside the dungeon HUD).
+            self.btn_dungeon_exit.update(dt)
         state = self.game.state
         # Refresh skill buttons if the runner's skill set changed.
         if len(self.skill_buttons) != len(self.game.runner.skills):
@@ -1011,24 +1016,16 @@ class GameScreen:
             draw_text_center(surf, txt, (cfg.WINDOW_W // 2, cfg.ROAD_TOP + 30),
                              font_lg(bold=True), col)
 
-        # Notifications.
+        # Notifications (capped at 3 visible so the upper play area stays
+        # clear; the runner's notify() list is already capped at 5).
         y = cfg.ROAD_TOP + 70
-        for (text, life, color) in runner.notifications[-6:]:
+        for (text, life, color) in runner.notifications[-3:]:
             a = max(0, min(1, life / 3.0))
             img = font_md(bold=True).render(text, True, color)
             img.set_alpha(int(255 * a))
             r = img.get_rect(midtop=(cfg.WINDOW_W // 2, y))
             surf.blit(img, r)
             y += r.h + 4
-
-        # Boss banner.
-        if world.boss_active:
-            banner = pygame.Rect(0, cfg.ROAD_TOP, cfg.WINDOW_W, 28)
-            bg2 = pygame.Surface(banner.size, pygame.SRCALPHA)
-            pygame.draw.rect(bg2, (40, 10, 20, 200), bg2.get_rect())
-            surf.blit(bg2, banner.topleft)
-            draw_text_center(surf, "BOSS", (cfg.WINDOW_W // 2, cfg.ROAD_TOP + 14),
-                             font_md(bold=True), C.text_bad)
 
         # Skill buttons + energy.
         # Task 27 (pl-juice-polish): draw the cooldown progress fill +
@@ -1122,9 +1119,9 @@ class GameScreen:
                     b.enabled = False
             b.draw(surf)
 
-        # Task 36: the categorized icon rail (NavItems + category
-        # dividers). The dividers are thin vertical lines between category
-        # groups (2px wide, full button height).
+        # Task 36: the primary nav rail (3 NavItems: Ascend / Hero / Menu).
+        # The category dividers are retired (no categories); the list is
+        # empty so the divider-drawing loop is a no-op.
         for dx, dh in self._nav_dividers:
             pygame.draw.rect(surf, C.panel_border,
                              (dx, 8, 2, dh))
@@ -1232,14 +1229,19 @@ class GameScreen:
     def _draw_dungeon_hud(self, surf, state) -> None:
         """Draw the active dungeon's HUD (floor + variant + exit button).
 
-        A small panel in the top-left of the play area showing the
+        A small panel in the top-right of the road (so it does not overlap
+        enemies, which walk the left/center of the road) showing the
         current dungeon's floor + variant (Story/Endless/Daily). The
         dungeon's best floor is shown too (the depth record). The HUD is
         drawn only when a dungeon is active (the dungeon is a track on
         the same run, not a separate screen).
         """
         from engine.runner import STORY_FLOORS, DAILY_FLOORS
-        x = 16
+        # Top-right of the road: x = WINDOW_W - 216..WINDOW_W - 16,
+        # y = HUD_H + 8 (104)..160. Enemies walk the left/center of the
+        # road (they spawn at x=1300 and walk left toward the ninja at
+        # x=180), so the top-right corner is clear of enemy traffic.
+        x = cfg.WINDOW_W - 216
         y = cfg.HUD_H + 8
         # The dungeon variant label (Story/Endless/Daily).
         vlabel = {"story": "Story", "endless": "Endless",
@@ -1262,6 +1264,11 @@ class GameScreen:
                   (x + 8, y + 26), font_xs(), C.text_dim)
         draw_text(surf, f"Best: {state.dungeon_best_floor}",
                   (x + 110, y + 26), font_xs(), C.text_dim)
+        # The Exit Dungeon button (to the panel's LEFT, in the clear
+        # upper-road area). Lets the player abandon any dungeon (including
+        # Endless). The button rect is set in __init__ to
+        # (panel.x - 80 - 8, y + 16, 80, 24).
+        self.btn_dungeon_exit.draw(surf)
 
     def _draw_dungeon_selector(self, surf) -> None:
         """Draw the dungeon variant selector modal.
@@ -1359,8 +1366,10 @@ class GameScreen:
         """
         from engine.runner import RHYTHM_CAP
         streak = state.rhythm_streak
-        # Place the display above the skill buttons, left-aligned.
-        x = 16
+        # Place the display on the right side, next to the energy bar (so it
+        # sits beside the Auto Katana button at WINDOW_W-180, not over the
+        # finisher/skill button rows on the left).
+        x = cfg.WINDOW_W - 320
         y = cfg.WINDOW_H - 80
         # Label + streak count.
         label = f"Rhythm {streak}/{RHYTHM_CAP}"
@@ -1408,15 +1417,16 @@ class GameScreen:
         last_btn = self.skill_buttons[-1]
         x0 = first_btn.rect.centerx
         x1 = last_btn.rect.centerx
-        y = first_btn.rect.y - 6
-        # Glow: a wide semi-transparent line over the button row.
-        glow = pygame.Surface((x1 - x0 + 40, 30), pygame.SRCALPHA)
+        y = first_btn.rect.y - 10
+        # Glow: a wide semi-transparent line over the button row (16px tall,
+        # sitting just above the skill row so it does not overlap the buttons).
+        glow = pygame.Surface((x1 - x0 + 40, 16), pygame.SRCALPHA)
         gw = glow.get_width()
         for w, a in ((8, int(80 * alpha)), (4, int(160 * alpha)),
                      (2, int(255 * alpha))):
             pygame.draw.line(glow, (255, 220, 120, a),
-                             (4, 15), (gw - 4, 15), w)
-        surf.blit(glow, (x0 - 20, y - 15))
+                             (4, 8), (gw - 4, 8), w)
+        surf.blit(glow, (x0 - 20, y - 8))
         # Synergy name text above the midpoint, fading.
         name = runner.last_synergy or ""
         if name:

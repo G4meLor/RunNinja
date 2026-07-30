@@ -36,7 +36,7 @@ from core.bonuses import aggregate_bonuses
 # ---------------------------------------------------------------------------
 # Diagram centre and radius for the four-element ring.
 _DIAG_CX = 480
-_DIAG_CY = 410
+_DIAG_CY = 420
 _DIAG_R = 170
 
 # Element-node radius (the circle drawn for each element).
@@ -55,7 +55,7 @@ _ELEMENTS = (
 )
 
 # Detail panel on the right.
-_DETAIL_RECT = pygame.Rect(780, 130, 480, 560)
+_DETAIL_RECT = pygame.Rect(780, 130, 480, 530)
 
 # Gate node id.
 _GATE_ID = "godai_gate"
@@ -122,6 +122,9 @@ class GodaiScreen:
     # Input
     # -----------------------------------------------------------------
     def handle(self, event: pygame.event.Event) -> None:
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         if event.type == pygame.MOUSEMOTION:
@@ -205,7 +208,11 @@ class GodaiScreen:
     _ATTUNE_RECT = pygame.Rect(16, 130, 740, 120)
 
     def _draw_attunement(self, surf: pygame.Surface, state, godai_unlocked: bool) -> None:
-        r = _ATTUNE_RECT
+        # ``_ATTUNE_RECT`` is a class attribute (defined just below this
+        # method), so it must be read via ``self`` -- a bare name lookup
+        # does not resolve class attributes inside a method body (it would
+        # raise NameError and crash the screen on open).
+        r = self._ATTUNE_RECT
         draw_panel(surf, r, fill=C.panel, border=C.panel_border, border_w=1)
         # Header.
         draw_text(surf, "Attunement", (r.x + 16, r.y + 12),

@@ -7,7 +7,7 @@ from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel
 from ui.widgets import Button, currency_pill
 from ui.tooltip import TooltipManager
-from utils import format_number
+from utils import format_number, clamp
 from core import game_economy
 
 
@@ -18,6 +18,12 @@ class UpgradesScreen:
                                on_click=lambda: self.game.set_screen("game"))
         self.buttons = [self.btn_back]
         self.upgrade_buttons: list[Button] = []
+        # Scroll state: the 21 upgrade buttons overflow the 720px window,
+        # so the list is a scrollable viewport that ends above the Back
+        # button (y=660). The viewport is 530px tall (y=120..650).
+        self.scroll = 0.0
+        self.target_scroll = 0.0
+        self.viewport = pygame.Rect(60, 120, 560, 530)
         self._build_buttons()
         # Task 36 (pl-hints-nav-tooltips): a TooltipManager with
         # callable-text (live values from state) for every upgrade.
@@ -34,8 +40,21 @@ class UpgradesScreen:
                          f"{label}  Lv {lvl}  →  {format_number(cost)} g",
                          on_click=lambda k=key: self._buy(k),
                          enabled=game_economy.can_upgrade(state, key))
+            # Store the base (unscrolled) y so _apply_scroll can offset the
+            # rect without losing the layout position.
+            btn._base_y = y
             self.upgrade_buttons.append(btn)
             y += 44
+        self._apply_scroll()
+
+    def _apply_scroll(self) -> None:
+        """Offset each upgrade button's rect.y by the current scroll so
+        hit-testing and drawing track the scroll position."""
+        for btn in self.upgrade_buttons:
+            btn.rect.y = btn._base_y - int(self.scroll)
+
+    def _max_scroll(self) -> float:
+        return max(0, len(self.upgrade_buttons) * 44 - 530)
 
     def _buy(self, key: str) -> None:
         state = self.game.state
@@ -44,10 +63,27 @@ class UpgradesScreen:
             self._build_buttons()
 
     def handle(self, event):
+        # Wire UI click sounds: gate each button on state.sound_on.
+        state = self.game.state
         for b in self.buttons + self.upgrade_buttons:
-            b.handle(event)
+            b.sound_on = state.sound_on
+        # Mouse wheel scrolls the upgrade list.
+        if event.type == pygame.MOUSEWHEEL:
+            self.target_scroll = clamp(
+                self.target_scroll - event.y * 44, 0, self._max_scroll())
+            self._apply_scroll()
+            return
+        # Break on the first consumed click so Back (first in self.buttons)
+        # wins the overlap with the last visible upgrade button (no
+        # double-fire).
+        for b in self.buttons + self.upgrade_buttons:
+            if b.handle(event):
+                break
 
     def update(self, dt):
+        # Smooth the scroll toward the target, then sync the button rects.
+        self.scroll += (self.target_scroll - self.scroll) * min(1.0, dt * 14)
+        self._apply_scroll()
         state = self.game.state
         for btn, (key, label, *_) in zip(self.upgrade_buttons, cfg.TAP_UPGRADE_DEFS):
             lvl = state.upgrade_level(key)
@@ -67,11 +103,21 @@ class UpgradesScreen:
                          (cfg.WINDOW_W // 2, 76), font_sm(), C.text_dim)
         x = 16; y = 100
         currency_pill(surf, x, y, "Gold", format_number(state.gold), C.gold)
-        for b in self.buttons + self.upgrade_buttons:
+        # Draw the upgrade buttons clipped to the viewport so the overflow
+        # does not bury the Back button, then draw the Back button on top
+        # (so it is never covered by a scrolled upgrade button).
+        clip = surf.get_clip()
+        surf.set_clip(self.viewport)
+        for b in self.upgrade_buttons:
+            b.draw(surf)
+        surf.set_clip(clip)
+        for b in self.buttons:
             b.draw(surf)
         # Task 36: register a tooltip per upgrade button with live values
         # (the current level, cost, and effect — a callable-text form so
-        # the tooltip reflects the current state when hovered).
+        # the tooltip reflects the current state when hovered). The tooltip
+        # rects use the scrolled rect positions (btn.rect after
+        # _apply_scroll, which update() calls each frame).
         self.tooltips.clear()
         for btn, (key, label, *_) in zip(self.upgrade_buttons,
                                          cfg.TAP_UPGRADE_DEFS):

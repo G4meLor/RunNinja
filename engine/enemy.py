@@ -19,6 +19,7 @@ from utils import rng
 PARTY_X = 180
 ENEMY_START_X = 1300
 ENEMY_ATTACK_RANGE = 230
+NINJA_ATTACK_RANGE = 400
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +145,15 @@ def spawn_miniboss(bdef, *, hp: float, dmg: float, gold: float) -> Enemy:
                  element=getattr(bdef, "element", "none"))
 
 
-def nearest_enemy(enemies: list[Enemy]) -> Optional[Enemy]:
+def nearest_enemy(enemies: list[Enemy], *, max_range: Optional[int] = None) -> Optional[Enemy]:
     best = None
     best_x = float("inf")
     for e in enemies:
-        if e.alive and e.x < best_x:
+        if not e.alive:
+            continue
+        if max_range is not None and (e.x - PARTY_X) > max_range:
+            continue
+        if e.x < best_x:
             best = e
             best_x = e.x
     return best
@@ -285,7 +290,7 @@ def tap(ninja, enemies: list[Enemy], *, combo_mult: float, gold_mult: float,
     = 1x); it flows into ``_apply_damage`` so the tap respects the type
     chart.
     """
-    target = nearest_enemy(enemies)
+    target = nearest_enemy(enemies, max_range=NINJA_ATTACK_RANGE)
     if target is None:
         return None, 0.0, False
     mult, is_crit = ninja.roll_crit()
@@ -351,7 +356,7 @@ def tick_combat(ninja, enemies: list[Enemy], dt: float, *,
         period = 1.0 / max(0.1, ninja.attack_speed * speed_mult)
         while ninja.attack_timer >= period:
             ninja.attack_timer -= period
-            target = nearest_enemy(enemies)
+            target = nearest_enemy(enemies, max_range=NINJA_ATTACK_RANGE)
             if target is not None:
                 mult, is_crit = ninja.roll_crit()
                 dmg = ninja.auto_damage * mult * combo_mult

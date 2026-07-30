@@ -56,11 +56,11 @@ class SettingsScreen:
         # the text-scale toggle cycles 0.8x -> 1.0x -> 1.2x -> 1.6x; the
         # dyslexia-font toggle enables a monospace fallback + wider letter
         # spacing. Each saves immediately + re-applies.
-        self.btn_contrast = Button((cfg.WINDOW_W // 2 - 160, 500, 320, 40), "",
+        self.btn_contrast = Button((cfg.WINDOW_W // 2 - 160, 520, 320, 40), "",
                                    on_click=self._toggle_contrast)
-        self.btn_text_scale = Button((cfg.WINDOW_W // 2 - 160, 546, 320, 40), "",
+        self.btn_text_scale = Button((cfg.WINDOW_W // 2 - 160, 560, 320, 40), "",
                                      on_click=self._toggle_text_scale)
-        self.btn_dyslexia = Button((cfg.WINDOW_W // 2 - 160, 592, 320, 40), "",
+        self.btn_dyslexia = Button((cfg.WINDOW_W // 2 - 160, 600, 320, 40), "",
                                    on_click=self._toggle_dyslexia)
         self.btn_reset = Button((cfg.WINDOW_W // 2 - 160, 648, 320, 44),
                                 "Reset all progress", on_click=self._reset, color=(160, 50, 60),
@@ -73,7 +73,7 @@ class SettingsScreen:
         # (0.0..1.0). The slider sets ``state.volume`` and saves. The
         # slider rect is below the music toggle; the player drags the
         # handle to set the volume.
-        self._slider_rect = pygame.Rect(cfg.WINDOW_W // 2 - 160, 470, 320, 16)
+        self._slider_rect = pygame.Rect(cfg.WINDOW_W // 2 - 160, 494, 320, 16)
         self._slider_dragging = False
         self.reset_confirm = 0.0
 
@@ -277,13 +277,13 @@ class SettingsScreen:
         # The panel is taller now (it holds the music toggle + the volume
         # slider + the existing toggles + the 3 accessibility toggles).
         # Buttons are laid out below.
-        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 520)
+        r = pygame.Rect(cfg.WINDOW_W // 2 - 200, 180, 400, 460)
         draw_panel(surf, r, fill=C.panel, border=C.panel_border)
         draw_text(surf, "Accessibility", (r.x + 20, r.y + 16), font_md(bold=True), C.text)
         draw_text(surf, "Reduced motion disables shake & heavy particles.",
                   (r.x + 20, r.y + 40), font_xs(), C.text_dim)
         draw_text(surf, "Render quality caps particles & glow (Low = 60fps floor).",
-                  (r.x + 20, r.y + 520 - 26), font_xs(), C.text_dim)
+                  (r.x + 20, r.y + 460 - 26), font_xs(), C.text_dim)
         for b in self.buttons:
             b.draw(surf)
         # Task 37 (pl-music-sfx): the volume slider. A horizontal slider
@@ -305,4 +305,4 @@ class SettingsScreen:
         pygame.draw.circle(surf, C.text, (hx, sr.centery), 7)
         pygame.draw.circle(surf, C.panel_border, (hx, sr.centery), 7, 1)
         draw_text_center(surf, f"Save: {SAVE_FILE}",
-                         (cfg.WINDOW_W // 2, cfg.WINDOW_H - 60), font_xs(), C.text_muted)
+                         (cfg.WINDOW_W // 2, cfg.WINDOW_H - 14), font_xs(), C.text_muted)

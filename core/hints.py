@@ -62,12 +62,12 @@ class HintEngine:
                  lambda s: s.monsters_killed >= 10
                            and s.building_level("farm") == 0,
                  "Buy a farm in Buildings.",
-                 "nav:buildings"),
+                 "nav:menuhub"),
             Hint("upgrade",
                  lambda s: s.building_level("farm") >= 1
                            and len(s.upgrades) == 0,
                  "Buy an upgrade.",
-                 "nav:upgrades"),
+                 "nav:menuhub"),
             Hint("ascend",
                  lambda s: s.best_zone >= 3 and s.ascend_tier == 0,
                  "Ascend for permanent power.",

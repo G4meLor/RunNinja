@@ -181,18 +181,18 @@ def test_chain_only_one_at_a_time(pygame_headless):
 # 5. Nav structure
 # ---------------------------------------------------------------------------
 def test_nav_items_constructed(pygame_headless):
-    """The GameScreen builds 12 NavItems with the expected screen_ids."""
+    """The GameScreen builds 3 NavItems (the primary rail) with the
+    expected screen_ids (ascend / hero / menuhub). The rest of the
+    screens live on the Menu hub."""
     import main
     g = main.Game()
     gs = g.screens["game"]
     # nav_items is the list of NavItem objects.
     assert hasattr(gs, "nav_items")
-    assert len(gs.nav_items) == 12
+    assert len(gs.nav_items) == 3
     # nav_by_screen is a dict keyed by screen_id.
     assert hasattr(gs, "_nav_by_screen")
-    expected_ids = {"ascend", "buildings", "upgrades", "skilltree", "pets",
-                    "quests", "records", "bestiary", "cosmetics", "godai",
-                    "hero", "settings"}
+    expected_ids = {"ascend", "hero", "menuhub"}
     assert set(gs._nav_by_screen.keys()) == expected_ids
 
 
@@ -215,12 +215,26 @@ def test_nav_items_click_navigates(pygame_headless):
     import main
     g = main.Game()
     gs = g.screens["game"]
-    # Find the Buildings nav item.
-    item = gs._nav_by_screen.get("buildings")
+    # Find the Menu hub nav item (the "menuhub" item opens the hub).
+    item = gs._nav_by_screen.get("menuhub")
     assert item is not None
     # Simulate a click: call on_click.
     item.on_click()
-    assert g.current_screen == "buildings"
+    assert g.current_screen == "menuhub"
+
+
+def test_menuhub_screen_constructs(pygame_headless):
+    """The MenuHubScreen constructs and has buttons for the screens."""
+    import main
+    g = main.Game()
+    # The hub screen exists.
+    assert "menuhub" in g.screens
+    hub = g.screens["menuhub"]
+    # The hub has a buttons list (the section buttons + the Back button).
+    assert hasattr(hub, "buttons")
+    # The hub has at least 13 buttons (14 screens + the Back button = 15;
+    # the screens are spread across the 4 sections).
+    assert len(hub.buttons) >= 13
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +269,7 @@ def test_stagger_normal_delays(pygame_headless):
     for item in gs.nav_items:
         item.update(0.016, 0.05, False)
     assert first.stagger_t > 0
-    # The last item (idx 11) has delay 11*0.03 = 0.33s; at elapsed=0.05
+    # The last item (idx 2) has delay 2*0.03 = 0.06s; at elapsed=0.05
     # it has not started yet (stagger_t == 0).
     last = gs.nav_items[-1]
     assert last.stagger_t == 0.0

@@ -78,6 +78,11 @@ class SkillTreeScreen:
                   if nid in st.BY_ID)
 
     def handle(self, event):
+        # Task 37 (pl-music-sfx): pass ``state.sound_on`` to each button so
+        # the UI click sound is gated on the SFX toggle.
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         if event.type == pygame.MOUSEMOTION:
@@ -160,20 +165,6 @@ class SkillTreeScreen:
                 else:
                     draw_panel(surf, r, fill=C.panel_lo, border=C.panel_border)
                     draw_text_center(surf, node.name, r.center, font_xs(), C.text_muted)
-        if self.hover_node:
-            node = st.BY_ID[self.hover_node]
-            tx, ty = pygame.mouse.get_pos()
-            tx += 16; ty += 16
-            if tx + 260 > cfg.WINDOW_W:
-                tx = cfg.WINDOW_W - 268
-            if ty + 90 > cfg.WINDOW_H:
-                ty = cfg.WINDOW_H - 98
-            tr = pygame.Rect(tx, ty, 260, 90)
-            draw_panel(surf, tr, fill=C.panel, border=C.panel_border_hi)
-            draw_text(surf, node.name, (tr.x + 10, tr.y + 8), font_sm(bold=True), C.text)
-            draw_text(surf, node.desc, (tr.x + 10, tr.y + 30), font_xs(), C.text_dim)
-            draw_text(surf, f"Cost: {node.cost} elixir", (tr.x + 10, tr.y + 52), font_xs(), (120, 220, 200))
-            draw_text(surf, f"Branch: {node.branch}", (tr.x + 10, tr.y + 70), font_xs(), C.text_muted)
         for b in self.buttons:
             b.draw(surf)
         # Task 36: register a tooltip per skill-tree node with live values

@@ -37,6 +37,7 @@ from ui.screen_cosmetics import CosmeticsScreen
 from ui.screen_bestiary import BestiaryScreen
 from ui.screen_hero import HeroScreen
 from ui.screen_godai import GodaiScreen
+from ui.screen_menuhub import MenuHubScreen
 
 
 class Game:
@@ -151,6 +152,7 @@ class Game:
             "bestiary": BestiaryScreen(self),
             "hero": HeroScreen(self),
             "godai": GodaiScreen(self),
+            "menuhub": MenuHubScreen(self),
         }
         self.current_screen = "menu"
         self.paused = False
@@ -238,6 +240,8 @@ class Game:
                         self.set_screen("godai")
                     elif event.key == pygame.K_c:
                         self.set_screen("cosmetics")
+                    elif event.key == pygame.K_m:
+                        self.set_screen("menuhub")
                 self.screens[self.current_screen].handle(event)
 
             self._update(dt)

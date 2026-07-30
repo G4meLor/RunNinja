@@ -6,6 +6,11 @@ reward), chapter (one-time, tied to zone progression). The screen shows
 all three in stacked sections so the player has a clear view of their
 short-term, week-long, and one-time goals. Quest variety is bounded --
 daily + weekly + chapter + achievements, NOT 6+ quest types.
+
+Scrolling: the stacked sections (daily + weekly + chapter + achievements
++ hidden) can grow past the 720px window, so the quest list scrolls
+inside a viewport rect. The title, subtitle, and currency pills stay
+fixed; only the quest content scrolls.
 """
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ import config as cfg
 from theme import C, font_xs, font_sm, font_md, font_lg, font_xl
 from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button, currency_pill
-from utils import format_number
+from utils import format_number, clamp
 from data import quests as q
 from core import quests as qcore
 
@@ -25,14 +30,37 @@ class QuestsScreen:
         self.btn_back = Button((16, cfg.WINDOW_H - 60, 120, 44), "Back",
                                on_click=lambda: self.game.set_screen("game"))
         self.buttons = [self.btn_back]
+        # Scroll state: the quest list content scrolls inside the viewport.
+        # Viewport top = 110 (just below the currency pills); bottom = 640
+        # (above the Back button at y=660). The content height is dynamic
+        # (computed in draw()), so max_scroll is derived from it.
+        self.scroll = 0.0
+        self.target_scroll = 0.0
+        self.viewport = pygame.Rect(60, 110, 1160, 530)
+        self._content_h = 530  # updated in draw()
+
+    def _max_scroll(self) -> float:
+        # The content height from the viewport top; max_scroll is the
+        # amount the content overflows the viewport (530px tall).
+        return max(0.0, getattr(self, "_content_h", 530) - 530)
 
     def handle(self, event):
+        # Wire UI click sounds: pass the sound_on gate to each button so
+        # the Back button plays the ui_click SFX when sound is enabled.
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
+        if event.type == pygame.MOUSEWHEEL:
+            self.target_scroll = clamp(
+                self.target_scroll - event.y * 40, 0, self._max_scroll())
 
     def update(self, dt):
         for b in self.buttons:
             b.update(dt)
+        # Smooth the scroll toward the target (same easing as ScrollList).
+        self.scroll += (self.target_scroll - self.scroll) * min(1.0, dt * 14)
 
     def draw(self, surf):
         state = self.game.state
@@ -46,9 +74,16 @@ class QuestsScreen:
         x += currency_pill(surf, x, y, "Medals", format_number(state.medals), (200, 200, 220)) + 10
         currency_pill(surf, x, y, "Amber", format_number(state.amber), (255, 180, 60))
 
+        # Clip the quest/achievement content to the viewport and scroll it.
+        # The header ("Daily Quests" at y=130) is the first content line;
+        # it scrolls WITH the list (the title/subtitle/pills above do not).
+        clip = surf.get_clip()
+        surf.set_clip(self.viewport)
+        y = 130 - int(self.scroll)
+
         # Daily quests.
-        draw_text(surf, "Daily Quests", (60, 130), font_lg(bold=True), C.text)
-        y = 170
+        draw_text(surf, "Daily Quests", (60, y), font_lg(bold=True), C.text)
+        y = 170 - int(self.scroll)
         for dq_state in state.daily_quests:
             dq = next((d for d in q.DAILY_POOL if d.id == dq_state["id"]), None)
             if dq is None:
@@ -161,6 +196,15 @@ class QuestsScreen:
                 label = "?  " + a.hint
             draw_text(surf, label, (60, y), font_xs(), col)
             y += 22
+
+        # Content height from the viewport top (110). y is the cursor after
+        # the last hidden achievement, already offset by -scroll, so add
+        # scroll back to get the unscrolled height. max_scroll then lets the
+        # content bottom reach exactly the viewport bottom (640).
+        self._content_h = y - 110 + int(self.scroll)
+        # Clamp the target scroll now that we know the real content height.
+        self.target_scroll = clamp(self.target_scroll, 0, self._max_scroll())
+        surf.set_clip(clip)
 
         for b in self.buttons:
             b.draw(surf)

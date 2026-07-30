@@ -8,6 +8,7 @@ from theme import draw_text, draw_text_center, draw_panel, draw_bar
 from ui.widgets import Button
 from utils import format_number
 from data import quests as q
+from data import pets as pet_def
 from data import skill_tree as st
 from core import game_economy
 
@@ -20,6 +21,9 @@ class RecordsScreen:
         self.buttons = [self.btn_back]
 
     def handle(self, event):
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
 
@@ -66,7 +70,7 @@ class RecordsScreen:
         # Collection.
         cr = pygame.Rect(x0, y0 + 3 * (card_h + gap) + 8, grid_w, 50)
         draw_panel(surf, cr, fill=C.panel, border=C.panel_border)
-        draw_text(surf, f"Pets  {len(state.pets)}/12   ·   Achievements  {len(state.achievements)}/{len(q.ACHIEVEMENTS)}",
+        draw_text(surf, f"Pets  {len(state.pets)}/{len(pet_def.PETS)}   ·   Achievements  {len(state.achievements)}/{len(q.ACHIEVEMENTS)}",
                   (cr.x + 14, cr.y + 16), font_md(bold=True), C.text)
 
         for b in self.buttons:

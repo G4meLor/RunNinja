@@ -81,6 +81,15 @@ class PetsScreen:
             self.game.state.save()
 
     def handle(self, event):
+        # Dismiss the pull-result animation on click (matches the
+        # "click to continue" text drawn in _draw_pull_anim).
+        if self.anim_result and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self.anim_result = None
+            return
+        # Wire UI click sounds to the current sound setting.
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:

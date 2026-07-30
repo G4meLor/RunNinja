@@ -244,6 +244,7 @@ def test_bosses_auto_killable_without_phantom_step(pygame_headless):
     bdef = ed.boss_for_zone(r.world.zone_id)
     boss = spawn_boss(bdef, hp=1.0, dmg=1.0, gold=1.0)
     r.world.enemies.append(boss)
+    boss.x = 200
     r.world.boss_active = True
     r.update(2.0)  # plenty of time for the ninja to auto-attack
     assert not boss.alive, "boss not auto-killed — finishers must not gate progression"
@@ -299,6 +300,7 @@ def test_executioner_edge_guaranteed_crit_on_tap(pygame_headless):
     enemy_hp = 10_000_000.0
     e = spawn_enemy(edef, hp=enemy_hp, dmg=1.0, gold=1.0)
     r.world.enemies.append(e)
+    e.x = 200
     # Tap once. With the fix, the tap is a guaranteed crit, so the
     # damage equals tap_damage * crit_dmg (the crit multiplier).
     r.tap()
@@ -331,6 +333,7 @@ def test_executioner_edge_guaranteed_crit_on_auto_attack(pygame_headless):
     enemy_hp = 10_000_000.0
     e = spawn_enemy(edef, hp=enemy_hp, dmg=1.0, gold=1.0)
     r.world.enemies.append(e)
+    e.x = 200
     # Run one update tick; the ninja auto-attacks the enemy. With the
     # fix, the attack is a guaranteed crit, so the damage equals
     # auto_damage * crit_dmg.

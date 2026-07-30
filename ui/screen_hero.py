@@ -90,7 +90,14 @@ class HeroScreen:
     # Public API
     # -----------------------------------------------------------------
     def handle(self, event):
+        # Task 37 (pl-music-sfx): gate the UI click sound on the live
+        # ``state.sound_on`` flag so buttons play the click SFX only when
+        # sound is enabled. The gate is set on every button before the
+        # event is dispatched (the flag is read fresh each event so a
+        # mid-session sound toggle takes effect immediately).
+        state = self.game.state
         for b in self.buttons:
+            b.sound_on = state.sound_on
             b.handle(event)
         # Forge panel: per-slot action buttons (enhance/reroll/salvage +
         # buy_legendary). The buttons are cached on ``self._forge_btns``
@@ -99,9 +106,15 @@ class HeroScreen:
         # and ``on_click`` fires.
         if self._forge_open:
             for b in self._forge_btns:
+                b.sound_on = state.sound_on
                 b.handle(event)
 
     def update(self, dt):
+        # Reflect the Forge panel's open/closed state on the toggle button:
+        # the label + the accent color shift when the panel is open so the
+        # player can see at a glance whether the Forge is showing.
+        self.btn_forge.label = "Close Forge" if self._forge_open else "Forge"
+        self.btn_forge.color = (150, 80, 220) if self._forge_open else (90, 60, 130)
         for b in self.buttons:
             b.update(dt)
         if self._forge_open:

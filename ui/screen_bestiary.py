@@ -44,6 +44,7 @@ from assets import enemy_surface, hsl
 from theme import (C, font_xs, font_sm, font_md, font_lg, font_xl,
                    draw_text, draw_text_center, draw_panel, gradient_v)
 from ui.widgets import Button
+from utils import clamp
 
 
 # --- Layout ---------------------------------------------------------------
@@ -125,6 +126,14 @@ class BestiaryScreen:
         self.scroll = 0.0
         self.target_scroll = 0.0
 
+        # Drag-scroll state (same pattern as ui.widgets.ScrollList). A
+        # press inside the scroll viewport starts a potential drag; if
+        # the mouse moves before the release the scroll follows the drag
+        # delta (clamped to 0..max_scroll). The release ends the drag.
+        self._dragging = False
+        self._drag_anchor_y = 0
+        self._drag_anchor_scroll = 0.0
+
         # Category tab (Task 26): the active filter. ``All`` shows every
         # zone; ``Bosses`` shows only the bosses; an element tab shows
         # only the zones whose enemies share that element.
@@ -162,13 +171,21 @@ class BestiaryScreen:
     # Input
     # ------------------------------------------------------------------
     def handle(self, event: pygame.event.Event) -> None:
+        # Task 37 (pl-music-sfx): pass ``state.sound_on`` to each button so
+        # the UI click sound is gated on the SFX toggle. Read once here so
+        # the rest of handle does not re-read it per button.
+        state = self.game.state
+        for b in self.buttons:
+            b.sound_on = state.sound_on
         for b in self.buttons:
             b.handle(event)
         if event.type == pygame.MOUSEWHEEL:
             self.target_scroll -= event.y * 60
             self.target_scroll = max(0.0, min(self.target_scroll, self.max_scroll))
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            # Category tab click (Task 26): the tab row is at _TAB_Y.
+            # Category tab click (Task 26): the tab row is at _TAB_Y. A tab
+            # click is not a drag-start (the tab row is outside the scroll
+            # viewport), so handle it first and return.
             for i, name in enumerate(_TABS):
                 r = self._tab_rect(i)
                 if r.collidepoint(event.pos):
@@ -179,6 +196,24 @@ class BestiaryScreen:
                         self.scroll = 0.0
                         self.target_scroll = 0.0
                     return
+            # Drag-scroll (same pattern as ui.widgets.ScrollList): a press
+            # inside the scroll viewport records a drag anchor; MOUSEMOTION
+            # while dragging sets target_scroll from the drag delta (clamped
+            # to 0..max_scroll); MOUSEBUTTONUP ends the drag. The viewport
+            # is the same rect the scroll content is clipped to in draw().
+            view = pygame.Rect(_VIEW_X, _VIEW_Y, _VIEW_W, _VIEW_H)
+            if view.collidepoint(event.pos):
+                self._dragging = True
+                self._drag_anchor_y = event.pos[1]
+                self._drag_anchor_scroll = self.target_scroll
+        elif event.type == pygame.MOUSEMOTION:
+            if self._dragging:
+                dy = event.pos[1] - self._drag_anchor_y
+                self.target_scroll = clamp(
+                    self._drag_anchor_scroll - dy, 0.0, self.max_scroll)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self._dragging:
+                self._dragging = False
 
     def update(self, dt: float) -> None:
         for b in self.buttons:

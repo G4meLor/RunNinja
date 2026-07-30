@@ -19,7 +19,7 @@ from core.quests import (maybe_refresh_dailies, update_daily_progress,
                          update_chapter_progress)
 from engine.ninja import Ninja, make_ninja, compute_ninja_stats
 from engine.enemy import (Enemy, tick_combat, tap as tap_enemy, nearest_enemy,
-                          PARTY_X, spawn_enemy, spawn_boss)
+                          PARTY_X, NINJA_ATTACK_RANGE, spawn_enemy, spawn_boss)
 from engine.firefly import Firefly, update_fireflies, catch_firefly
 from engine.skills import ActiveSkill, make_skill, tick_skill, can_fire, fire as fire_skill
 from engine.skills import SYNERGIES, SYNERGY_WINDOW, SYNERGY_DMG_MULT
@@ -1052,7 +1052,7 @@ class Runner:
         # fires when the tap damage exceeds the enemy's remaining HP by
         # a large margin (CLEAVE_OVERKILL_RATIO * HP), i.e. the enemy
         # was one-shot by a huge margin.
-        target_pre = nearest_enemy(self.world.enemies)
+        target_pre = nearest_enemy(self.world.enemies, max_range=NINJA_ATTACK_RANGE)
         target_hp_before = target_pre.hp if target_pre is not None else 0.0
         # ``tap_enemy`` returns ``(target, dmg_dealt, is_crit)`` so we
         # can use the ACTUAL damage dealt for the cleave overkill
@@ -1403,6 +1403,8 @@ class Runner:
     # Misc
     # -----------------------------------------------------------------
     def notify(self, text: str, color=(255, 255, 255)) -> None:
+        if len(self.notifications) > 5:
+            self.notifications.pop(0)
         self.notifications.append((text, 3.0, color))
 
     def update_fx(self, dt: float) -> None:
